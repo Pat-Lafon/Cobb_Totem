@@ -1,5 +1,5 @@
-use tree_sitter::Node;
 use crate::{AstNode, LetBinding, LetBindingBody, PatternCase, Type, TypeDecl, Variant};
+use tree_sitter::Node;
 
 pub struct OcamlParser {
     source: String,
@@ -18,7 +18,10 @@ impl OcamlParser {
         text.parse()
     }
 
-    pub fn parse(&self, tree: &tree_sitter::Tree) -> Result<Vec<AstNode>, Box<dyn std::error::Error>> {
+    pub fn parse(
+        &self,
+        tree: &tree_sitter::Tree,
+    ) -> Result<Vec<AstNode>, Box<dyn std::error::Error>> {
         let mut nodes = Vec::new();
         let mut cursor = tree.walk();
 
