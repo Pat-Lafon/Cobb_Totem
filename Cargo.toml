@@ -6,3 +6,6 @@ edition = "2024"
 [dependencies]
 tree-sitter = "0.25.10"
 tree-sitter-ocaml = "0.24.2"
+
+[features]
+debug = []

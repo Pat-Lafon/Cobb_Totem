@@ -2,6 +2,7 @@ use std::fmt;
 use std::str::FromStr;
 
 pub mod ocamlparser;
+pub mod lean_backend;
 
 /// Validates that a name is a valid constructor identifier.
 ///

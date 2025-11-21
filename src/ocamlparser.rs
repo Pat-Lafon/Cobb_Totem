@@ -931,7 +931,7 @@ mod tests {
     #[test]
     fn test_parse_simple_type_definition() {
         let source = "type ilist = Nil | Cons of int * int list";
-        let (parser, tree) = setup_parser_and_tree(source);
+        let (parser, tree) = OcamlParser::parse_source(source).unwrap();
 
         let expected = vec![AstNode::TypeDeclaration(TypeDecl {
             name: "ilist".to_string(),
@@ -953,7 +953,7 @@ mod tests {
     #[test]
     fn test_parse_type_constructor_with_multiple_fields() {
         let source = "type triple = Triple of int * ilist * bool";
-        let (parser, tree) = setup_parser_and_tree(source);
+        let (parser, tree) = OcamlParser::parse_source(source).unwrap();
 
         let expected = vec![AstNode::TypeDeclaration(TypeDecl {
             name: "triple".to_string(),
