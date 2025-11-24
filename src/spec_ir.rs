@@ -7,8 +7,6 @@ use crate::{
     ocamlparser::OcamlParser,
     prog_ir::{self, BinaryOp, Type, UnaryOp},
 };
-#[cfg(test)]
-use crate::lean_validation::validate_lean_code;
 
 /// A specification axiom that can be translated to Lean theorems
 #[derive(Debug, Clone)]
@@ -221,13 +219,15 @@ let [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -
 mod tests {
     use super::*;
 
+    use crate::lean_validation::validate_lean_code;
+
     #[test]
     fn test_axiom_with_prelude() {
         // Load the prelude predicates
         let prelude_nodes = predicates::parse_all().expect("Failed to parse prelude");
 
         // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((emp l) → ¬(hd l x)))
-         let axiom = Axiom {
+        let axiom = Axiom {
             name: "list_emp_no_hd".to_string(),
             params: vec![
                 Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
@@ -257,10 +257,56 @@ mod tests {
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
-         // This demonstrates the end-to-end flow from spec IR to Lean backend validation
-         let result = validate_lean_code(&lean_code);
-         // We expect this to succeed with properly typed axioms
-         assert!(
+        // This demonstrates the end-to-end flow from spec IR to Lean backend validation
+        let result = validate_lean_code(&lean_code);
+        // We expect this to succeed with properly typed axioms
+        assert!(
+            result.is_ok(),
+            "Expected validation to succeed, but got: {:?}\nLean code:\n{}",
+            result,
+            lean_code
+        );
+    }
+
+    #[test]
+    fn test_axiom_list_emp_no_tl() {
+        // Load the prelude predicates
+        let prelude_nodes = predicates::parse_all().expect("Failed to parse prelude");
+
+        // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), ((emp l) → ¬(tl l l1)))
+        let axiom = Axiom {
+            name: "list_emp_no_tl".to_string(),
+            params: vec![
+                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
+                Parameter::universal("l1".to_string(), Type::Named("ilist".to_string())),
+            ],
+            body: Proposition::Implication(
+                Box::new(Proposition::Predicate(
+                    "emp".to_string(),
+                    vec![Expression::Variable("l".to_string())],
+                )),
+                Box::new(Proposition::Not(Box::new(Proposition::Predicate(
+                    "tl".to_string(),
+                    vec![
+                        Expression::Variable("l".to_string()),
+                        Expression::Variable("l1".to_string()),
+                    ],
+                )))),
+            ),
+        };
+
+        // Build the Lean context with prelude definitions and axiom
+        let lean_code = build_lean_context(prelude_nodes, vec![axiom]);
+
+        // Verify the code structure before validation
+        assert!(!lean_code.is_empty());
+        assert!(lean_code.contains("list_emp_no_tl"));
+        assert!(lean_code.contains("theorem"));
+
+        // Validate the generated Lean code using the Lean backend
+        let result = validate_lean_code(&lean_code);
+        // We expect this to succeed with properly typed axioms
+        assert!(
             result.is_ok(),
             "Expected validation to succeed, but got: {:?}\nLean code:\n{}",
             result,
