@@ -159,7 +159,10 @@ impl ToLean for TypeDecl {
             format!("@[{}]\n", self.attributes.join(", "))
         };
 
-        format!("{}inductive {} where\n  | {}\nderiving BEq, Repr", attrs_str, self.name, variants_str)
+        format!(
+            "{}inductive {} where\n  | {}\nderiving BEq, Repr",
+            attrs_str, self.name, variants_str
+        )
     }
 }
 

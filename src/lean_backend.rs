@@ -161,7 +161,10 @@ mod tests {
         };
 
         let lean_output = bool_type.to_lean();
-        assert_eq!(lean_output, "inductive MyBool where\n  | True\n  | False\nderiving BEq, Repr");
+        assert_eq!(
+            lean_output,
+            "inductive MyBool where\n  | True\n  | False\nderiving BEq, Repr"
+        );
         assert!(
             validate_lean_code(&lean_output).is_ok(),
             "Generated Lean code failed validation"
@@ -318,8 +321,16 @@ mod tests {
         };
 
         let lean_code = func.to_lean();
-        assert!(lean_code.contains("@[simp, grind]"), "Expected attribute annotation @[simp, grind] in output, got: {}", lean_code);
-        assert!(lean_code.starts_with("@[simp, grind]"), "Attributes should be at the start, got: {}", lean_code);
+        assert!(
+            lean_code.contains("@[simp, grind]"),
+            "Expected attribute annotation @[simp, grind] in output, got: {}",
+            lean_code
+        );
+        assert!(
+            lean_code.starts_with("@[simp, grind]"),
+            "Attributes should be at the start, got: {}",
+            lean_code
+        );
         validate_lean_code(&lean_code).unwrap();
     }
 }

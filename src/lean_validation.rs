@@ -23,23 +23,38 @@ pub fn validate_lean_code(code: &str) -> Result<(), String> {
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .map_err(|e| format!("Lean code validation failed:\n{}\n\nFailed to spawn lean: {}", code, e))?;
+        .map_err(|e| {
+            format!(
+                "Lean code validation failed:\n{}\n\nFailed to spawn lean: {}",
+                code, e
+            )
+        })?;
 
     // Write code to stdin
     if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(wrapped_code.as_bytes())
-            .map_err(|e| format!("Lean code validation failed:\n{}\n\nFailed to write to stdin: {}", code, e))?;
+        stdin.write_all(wrapped_code.as_bytes()).map_err(|e| {
+            format!(
+                "Lean code validation failed:\n{}\n\nFailed to write to stdin: {}",
+                code, e
+            )
+        })?;
     }
 
-    let output = child
-        .wait_with_output()
-        .map_err(|e| format!("Lean code validation failed:\n{}\n\nFailed to run lean: {}", code, e))?;
+    let output = child.wait_with_output().map_err(|e| {
+        format!(
+            "Lean code validation failed:\n{}\n\nFailed to run lean: {}",
+            code, e
+        )
+    })?;
 
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!("Lean code validation failed:\n{}\n\nError: {}", code, String::from_utf8_lossy(&output.stdout)))
+        Err(format!(
+            "Lean code validation failed:\n{}\n\nError: {}",
+            code,
+            String::from_utf8_lossy(&output.stdout)
+        ))
     }
 }
 

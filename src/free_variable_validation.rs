@@ -1,6 +1,6 @@
 use itertools::Itertools as _;
 
-use crate::spec_ir::{Axiom, Proposition, Expression};
+use crate::spec_ir::{Axiom, Expression, Proposition};
 
 pub fn collect_all_variables(prop: &Proposition) -> std::collections::HashSet<String> {
     let mut vars = std::collections::HashSet::new();
@@ -8,10 +8,7 @@ pub fn collect_all_variables(prop: &Proposition) -> std::collections::HashSet<St
     vars
 }
 
-fn collect_variables_in_prop(
-    prop: &Proposition,
-    vars: &mut std::collections::HashSet<String>,
-) {
+fn collect_variables_in_prop(prop: &Proposition, vars: &mut std::collections::HashSet<String>) {
     match prop {
         Proposition::Expr(expr) => collect_variables_in_expr(expr, vars),
         Proposition::Predicate(_, args) => {
@@ -31,10 +28,7 @@ fn collect_variables_in_prop(
     }
 }
 
-fn collect_variables_in_expr(
-    expr: &Expression,
-    vars: &mut std::collections::HashSet<String>,
-) {
+fn collect_variables_in_expr(expr: &Expression, vars: &mut std::collections::HashSet<String>) {
     match expr {
         Expression::Variable(name) => {
             vars.insert(name.clone());
@@ -72,8 +66,8 @@ impl ValidateNoFreeVariables for Axiom {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::spec_ir::Parameter;
     use crate::prog_ir::Type;
+    use crate::spec_ir::Parameter;
 
     #[test]
     fn test_free_variable_detection() {
