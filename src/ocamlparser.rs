@@ -1,4 +1,4 @@
-use crate::{
+use crate::prog_ir::{
     AstNode, BinaryOp, ConstructorName, Expression, LetBinding, Literal, Pattern, Type, TypeDecl,
     Variant,
 };
@@ -1109,7 +1109,7 @@ mod tests {
     match l with
     | Nil -> n = 0
     | Cons (_, rest) -> len rest (n - 1)";
-        
+
         let expected = vec![
             AstNode::TypeDeclaration(TypeDecl {
                 name: "ilist".to_string(),
@@ -1345,7 +1345,7 @@ mod tests {
     #[test]
     fn test_parse_lowercase_variable_pattern() {
         let source = "let test (x : int) : bool = match x with | n -> n = 0";
-        
+
         let expected = vec![AstNode::LetBinding(LetBinding {
             name: "test".to_string(),
             attributes: vec![],
@@ -1371,7 +1371,7 @@ mod tests {
     #[test]
     fn test_parse_qualified_constructor_pattern() {
         let source = "let test (x : int) : bool = match x with | List.Nil -> true | _ -> false";
-        
+
         let expected = vec![AstNode::LetBinding(LetBinding {
             name: "test".to_string(),
             attributes: vec![],
@@ -1402,7 +1402,7 @@ mod tests {
     #[test]
     fn test_parse_parenthesized_single_pattern() {
         let source = "let test (x : int) : bool = match x with | (0) -> true | _ -> false";
-        
+
         let expected = vec![AstNode::LetBinding(LetBinding {
             name: "test".to_string(),
             attributes: vec![],

@@ -1,58 +1,11 @@
 /// Lean backend for outputting AST to Lean 4 syntax
 ///
 use crate::{
-    AstNode, BinaryOp, Expression, LetBinding, Literal, Pattern, Type, TypeDecl, UnaryOp, Variant,
+    ToLean,
+    prog_ir::{AstNode, BinaryOp, Expression, LetBinding, UnaryOp},
 };
 
-/// Trait for converting AST nodes to Lean syntax
-pub trait ToLean {
-    fn to_lean(&self) -> String;
-}
-
-impl ToLean for TypeDecl {
-    fn to_lean(&self) -> String {
-        let variants_str = self
-            .variants
-            .iter()
-            .map(|v| v.to_lean_with_type(&self.name))
-            .collect::<Vec<_>>()
-            .join("\n  | ");
-
-        format!("inductive {} where\n  | {}", self.name, variants_str)
-    }
-}
-
-impl Variant {
-    /// Convert variant to Lean syntax with the return type
-    pub fn to_lean_with_type(&self, return_type: &str) -> String {
-        if self.fields.is_empty() {
-            self.name.clone()
-        } else {
-            let mut field_strs = self.fields.iter().map(|f| f.to_lean()).collect::<Vec<_>>();
-            field_strs.push(return_type.to_string());
-            let type_sig = field_strs.join(" → ");
-            format!("{} : {}", self.name, type_sig)
-        }
-    }
-}
-
-impl ToLean for Variant {
-    fn to_lean(&self) -> String {
-        self.name.clone()
-    }
-}
-
-impl ToLean for Type {
-    fn to_lean(&self) -> String {
-        match self {
-            Type::Int => "Int".to_string(),
-            Type::Bool => "Bool".to_string(),
-            Type::Unit => "Unit".to_string(),
-            Type::Named(name) => name.clone(),
-            Type::Function(from, to) => format!("{} → {}", from.to_lean(), to.to_lean()),
-        }
-    }
-}
+// TypeDecl, Variant, and Type ToLean implementations are in lib.rs
 
 impl ToLean for LetBinding {
     fn to_lean(&self) -> String {
@@ -163,39 +116,7 @@ impl ToLean for Expression {
     }
 }
 
-impl ToLean for Literal {
-    fn to_lean(&self) -> String {
-        match self {
-            Literal::Int(n) => n.to_string(),
-            Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        }
-    }
-}
-
-impl ToLean for Pattern {
-    fn to_lean(&self) -> String {
-        match self {
-            Pattern::Variable(name) => name.clone(),
-            Pattern::Constructor(name, patterns) => {
-                if patterns.is_empty() {
-                    format!(".{}", name)
-                } else {
-                    format!(
-                        ".{} {}",
-                        name,
-                        patterns
-                            .iter()
-                            .map(|p| p.to_lean())
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    )
-                }
-            }
-            Pattern::Literal(lit) => lit.to_lean(),
-            Pattern::Wildcard => "_".to_string(),
-        }
-    }
-}
+// Literal and Pattern ToLean implementations are in lib.rs
 
 impl ToLean for AstNode {
     fn to_lean(&self) -> String {
@@ -206,73 +127,14 @@ impl ToLean for AstNode {
     }
 }
 
-/// Validation module for Lean code
-pub mod validation {
-    use std::io::Write;
-    use std::process::Command;
-
-    /// Check if debug output is enabled via feature flag
-    fn debug_enabled() -> bool {
-        cfg!(feature = "debug")
-    }
-
-    /// Validate generated Lean code by running the lean type checker via stdin
-    pub fn validate_lean_code(code: &str) -> Result<(), String> {
-        // Wrap in namespace for recursive types and to isolate scope
-        let wrapped_code = format!("namespace GeneratedCode\n\n{}\n\nend GeneratedCode\n", code);
-
-        if debug_enabled() {
-            debug_print_lean(code);
-        }
-
-        // Run lean with code piped via stdin
-        let mut child = Command::new("lean")
-            .arg("--stdin")
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("Failed to spawn lean: {}", e))?;
-
-        // Write code to stdin
-        if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(wrapped_code.as_bytes())
-                .map_err(|e| format!("Failed to write to stdin: {}", e))?;
-        }
-
-        let output = child
-            .wait_with_output()
-            .map_err(|e| format!("Failed to run lean: {}", e))?;
-
-        if output.status.success() {
-            Ok(())
-        } else {
-            Err(String::from_utf8_lossy(&output.stdout).to_string())
-        }
-    }
-
-    /// Print generated Lean code for debugging
-    pub fn debug_print_lean(code: &str) {
-        eprintln!("\n=== Generated Lean Code ===");
-        for line in code.lines() {
-            eprintln!("{}", line);
-        }
-        eprintln!("===========================\n");
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::validation::*;
+    use crate::{
+        lean_validation::validate_lean_code,
+        prog_ir::{ConstructorName, Literal, Pattern, Type, TypeDecl, Variant},
+    };
+
     use super::*;
-    use crate::BinaryOp;
-    use crate::ConstructorName;
-    use crate::Expression;
-    use crate::LetBinding;
-    use crate::Literal;
-    use crate::Pattern;
-    use crate::{Type, TypeDecl, Variant};
 
     #[test]
     fn test_simple_bool_type() {
@@ -291,10 +153,7 @@ mod tests {
         };
 
         let lean_output = bool_type.to_lean();
-        assert_eq!(
-            lean_output,
-            "inductive MyBool where\n  | True\n  | False"
-        );
+        assert_eq!(lean_output, "inductive MyBool where\n  | True\n  | False");
         assert!(
             validate_lean_code(&lean_output).is_ok(),
             "Generated Lean code failed validation"
