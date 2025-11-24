@@ -1,6 +1,12 @@
 use std::fmt;
 
-use crate::{ToLean, prog_ir::{BinaryOp, Type, UnaryOp}};
+use itertools::Itertools as _;
+
+use crate::{
+    ToLean,
+    ocamlparser::OcamlParser,
+    prog_ir::{self, BinaryOp, Type, UnaryOp},
+};
 #[cfg(test)]
 use crate::lean_validation::validate_lean_code;
 
@@ -110,7 +116,12 @@ impl fmt::Display for Parameter {
 
 impl ToLean for Parameter {
     fn to_lean(&self) -> String {
-        format!("{} {} : {}", self.quantifier.to_lean(), self.name, self.typ.to_lean())
+        format!(
+            "{} {} : {}",
+            self.quantifier.to_lean(),
+            self.name,
+            self.typ.to_lean()
+        )
     }
 }
 
@@ -127,8 +138,6 @@ impl ToLean for Axiom {
         format!("theorem {} : {} := sorry", self.name, body_str)
     }
 }
-
-
 
 impl ToLean for Proposition {
     fn to_lean(&self) -> String {
@@ -183,7 +192,79 @@ impl ToLean for Expression {
     }
 }
 
+/// Build Lean code context: axioms with type definitions and predicate definitions
+pub fn build_lean_context(nodes: Vec<crate::prog_ir::AstNode>, axioms: Vec<Axiom>) -> String {
+    nodes
+        .iter()
+        .map(|node| node.to_lean())
+        .chain(axioms.iter().map(|axiom| axiom.to_lean()))
+        .join("\n\n")
+}
+
+/// Helper functions to parse predicate definitions for the ilist datatype
+pub mod predicates {
+    use super::*;
+
+    pub const PRELUDE: &str = "type ilist = Nil | Cons of int * ilist
+let [@simp] [@grind] emp (l : ilist) : bool = match l with | Nil -> true | Cons (_, _) -> false
+let [@simp] [@grind] hd (l : ilist) (x : int) : bool = match l with | Nil -> false | Cons (h, _) -> h = x
+let [@simp] [@grind] tl (l : ilist) (xs : ilist) : bool = match l with | Nil -> false | Cons (_, t) -> t = xs
+let [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons (_, xs) -> len xs (n - 1)";
+
+    /// Parse all predicates and type definitions
+    pub fn parse_all() -> Result<Vec<prog_ir::AstNode>, Box<dyn std::error::Error>> {
+        OcamlParser::parse_nodes(PRELUDE)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_axiom_with_prelude() {
+        // Load the prelude predicates
+        let prelude_nodes = predicates::parse_all().expect("Failed to parse prelude");
+
+        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((emp l) → ¬(hd l x)))
+         let axiom = Axiom {
+            name: "list_emp_no_hd".to_string(),
+            params: vec![
+                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
+                Parameter::universal("x".to_string(), Type::Named("Int".to_string())),
+            ],
+            body: Proposition::Implication(
+                Box::new(Proposition::Predicate(
+                    "emp".to_string(),
+                    vec![Expression::Variable("l".to_string())],
+                )),
+                Box::new(Proposition::Not(Box::new(Proposition::Predicate(
+                    "hd".to_string(),
+                    vec![
+                        Expression::Variable("l".to_string()),
+                        Expression::Variable("x".to_string()),
+                    ],
+                )))),
+            ),
+        };
+
+        // Build the Lean context with prelude definitions and axiom
+        let lean_code = build_lean_context(prelude_nodes, vec![axiom]);
+
+        // Verify the code structure before validation
+        assert!(!lean_code.is_empty());
+        assert!(lean_code.contains("list_emp_no_hd"));
+        assert!(lean_code.contains("theorem"));
+
+        // Validate the generated Lean code using the Lean backend
+         // This demonstrates the end-to-end flow from spec IR to Lean backend validation
+         let result = validate_lean_code(&lean_code);
+         // We expect this to succeed with properly typed axioms
+         assert!(
+            result.is_ok(),
+            "Expected validation to succeed, but got: {:?}\nLean code:\n{}",
+            result,
+            lean_code
+        );
+    }
+}

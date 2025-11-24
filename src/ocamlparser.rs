@@ -26,6 +26,12 @@ impl OcamlParser {
         Ok((ocaml_parser, tree))
     }
 
+    /// Parse OCaml source code and return all AstNodes
+    pub fn parse_nodes(source: &str) -> Result<Vec<AstNode>, Box<dyn std::error::Error>> {
+        let (parser, tree) = Self::parse_source(source)?;
+        parser.parse(&tree)
+    }
+
     // Example: "int", "int list", "string * bool"
     fn parse_type(&self, node: Node) -> Type {
         let text = node
@@ -41,6 +47,30 @@ impl OcamlParser {
             "Failed to restore cursor to {} parent",
             context
         );
+    }
+
+    /// Helper: parse attributes from the current node and advance cursor.
+    /// Returns a vector of cleaned attribute names (without [@...] brackets).
+    /// Assumes cursor is at an "attribute" node; after execution, cursor is at the next sibling.
+    fn parse_attributes(&self, cursor: &mut tree_sitter::TreeCursor) -> Vec<String> {
+        let mut attributes = Vec::new();
+        while cursor.node().kind() == "attribute" {
+            let attr_text = cursor
+                .node()
+                .utf8_text(self.source.as_bytes())
+                .expect("Failed to extract attribute")
+                .to_string();
+            // Remove surrounding [@...] brackets
+            let cleaned = attr_text
+                .trim_matches(|c| c == '@' || c == '[' || c == ']')
+                .to_string();
+            attributes.push(cleaned);
+            assert!(
+                cursor.goto_next_sibling(),
+                "Failed to advance cursor past attribute"
+            );
+        }
+        attributes
     }
 
     /// Parse a parameter node to extract name and required type annotation.
@@ -150,6 +180,7 @@ impl OcamlParser {
     }
 
     // Example: "type ilist = Nil | Cons of int * int list"
+    // Example with attribute: "type[@simp] ilist = Nil | Cons of int * int list"
     fn parse_type_definition(&self, cursor: &mut tree_sitter::TreeCursor) -> TypeDecl {
         assert!(cursor.goto_first_child(), "Type definition has no children");
 
@@ -158,12 +189,18 @@ impl OcamlParser {
 
         assert!(
             cursor.goto_next_sibling(),
-            "Type definition missing type_binding"
+            "Type definition missing children after 'type'"
         );
+
+        // Step 1: Collect optional attributes (may be multiple)
+        let attributes = self.parse_attributes(cursor);
+
+        // Step 2: Parse type_binding
         let type_binding = cursor.node();
         assert_eq!(type_binding.kind(), "type_binding");
 
-        let result = self.parse_type_binding(cursor);
+        let mut result = self.parse_type_binding(cursor);
+        result.attributes = attributes;
 
         // After parse_type_binding, cursor is at type_binding
         // Verify no extra children after type_binding
@@ -240,7 +277,11 @@ impl OcamlParser {
 
         // Restore cursor to type_binding node
         Self::restore_cursor(cursor, "type_binding");
-        TypeDecl { name, variants }
+        TypeDecl {
+            name,
+            variants,
+            attributes: Vec::new(),
+        }
     }
 
     // Example: "Nil" or "Cons of int * int list"
@@ -319,10 +360,7 @@ impl OcamlParser {
 
     // Example: "let rec len (l : ilist) (n : int) : bool = match l with ..."
     fn parse_value_definition(&self, cursor: &mut tree_sitter::TreeCursor) -> LetBinding {
-        let mut attributes = Vec::new();
-        let mut is_recursive = false;
         let mut params = Vec::new();
-        let mut return_type = None;
 
         assert!(
             cursor.goto_first_child(),
@@ -338,28 +376,18 @@ impl OcamlParser {
         );
 
         // Step 1: Collect optional attributes (may be multiple)
-        while cursor.node().kind() == "attribute" {
-            attributes.push(
-                cursor
-                    .node()
-                    .utf8_text(self.source.as_bytes())
-                    .expect("Failed to extract attribute")
-                    .to_string(),
-            );
-            assert!(
-                cursor.goto_next_sibling(),
-                "Value definition missing 'rec' or 'let_binding' after attribute"
-            );
-        }
+        let attributes = self.parse_attributes(cursor);
 
         // Step 2: Check for 'rec' keyword (optional)
-        if cursor.node().kind() == "rec" {
-            is_recursive = true;
+        let is_recursive = if cursor.node().kind() == "rec" {
             assert!(
                 cursor.goto_next_sibling(),
                 "Value definition missing let_binding after 'rec'"
             );
-        }
+            true
+        } else {
+            false
+        };
 
         // Step 3: Parse let_binding
         assert_eq!(
@@ -384,7 +412,7 @@ impl OcamlParser {
         }
 
         // Step 3c: Handle optional return type annotation (preceded by ':')
-        if cursor.node().kind() == ":" {
+        let return_type = if cursor.node().kind() == ":" {
             assert!(
                 cursor.goto_next_sibling(),
                 "Return type annotation missing type after ':'"
@@ -397,10 +425,13 @@ impl OcamlParser {
                 "Expected type after ':', got '{}'",
                 type_node.kind()
             );
-            return_type = Some(self.parse_type(type_node));
+            let return_type = Some(self.parse_type(type_node));
 
             assert!(cursor.goto_next_sibling(), "Expected '=' after return type");
-        }
+            return_type
+        } else {
+            None
+        };
 
         assert_eq!(cursor.node().kind(), "=");
 
@@ -945,6 +976,53 @@ mod tests {
                     fields: vec![Type::Int, Type::Named("int list".to_string())],
                 },
             ],
+            attributes: vec![],
+        })];
+
+        assert_eq!(parser.parse(&tree).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_type_definition_with_attribute() {
+        let source = "type[@simp] ilist = Nil | Cons of int * int list";
+        let (parser, tree) = OcamlParser::parse_source(source).unwrap();
+
+        let expected = vec![AstNode::TypeDeclaration(TypeDecl {
+            name: "ilist".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Nil".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "Cons".to_string(),
+                    fields: vec![Type::Int, Type::Named("int list".to_string())],
+                },
+            ],
+            attributes: vec!["simp".to_string()],
+        })];
+
+        assert_eq!(parser.parse(&tree).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_type_definition_with_multiple_attributes() {
+        let source = "type[@simp][@reflect] ilist = Nil | Cons of int * int list";
+        let (parser, tree) = OcamlParser::parse_source(source).unwrap();
+
+        let expected = vec![AstNode::TypeDeclaration(TypeDecl {
+            name: "ilist".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Nil".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "Cons".to_string(),
+                    fields: vec![Type::Int, Type::Named("int list".to_string())],
+                },
+            ],
+            attributes: vec!["simp".to_string(), "reflect".to_string()],
         })];
 
         assert_eq!(parser.parse(&tree).unwrap(), expected);
@@ -961,6 +1039,7 @@ mod tests {
                 name: "Triple".to_string(),
                 fields: vec![Type::Int, Type::Named("ilist".to_string()), Type::Bool],
             }],
+            attributes: vec![],
         })];
 
         assert_eq!(parser.parse(&tree).unwrap(), expected);
@@ -1065,7 +1144,7 @@ mod tests {
             "let[@reflect] rec len (l : ilist) (n : int) : bool = n = 0",
             vec![let_binding_rec(
                 "len",
-                vec!["[@reflect]"],
+                vec!["reflect"],
                 vec![("l", Type::Named("ilist".to_string())), ("n", Type::Int)],
                 Some(Type::Bool),
                 Expression::BinaryOp(
@@ -1123,10 +1202,11 @@ mod tests {
                         fields: vec![Type::Int, Type::Named("int list".to_string())],
                     },
                 ],
+                attributes: vec![],
             }),
             AstNode::LetBinding(LetBinding {
                 name: "len".to_string(),
-                attributes: vec!["[@reflect]".to_string()],
+                attributes: vec!["reflect".to_string()],
                 is_recursive: true,
                 params: vec![
                     ("l".to_string(), Type::Named("ilist".to_string())),

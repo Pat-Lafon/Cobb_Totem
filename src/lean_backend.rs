@@ -23,8 +23,15 @@ impl ToLean for LetBinding {
             String::new()
         };
 
+        let attrs_str = if self.attributes.is_empty() {
+            String::new()
+        } else {
+            format!("@[{}]\n", self.attributes.join(", "))
+        };
+
         format!(
-            "{} {} {}{} := {}",
+            "{}{} {} {}{} := {}",
+            attrs_str,
             def_keyword,
             self.name,
             params_str,
@@ -150,10 +157,11 @@ mod tests {
                     fields: vec![],
                 },
             ],
+            attributes: vec![],
         };
 
         let lean_output = bool_type.to_lean();
-        assert_eq!(lean_output, "inductive MyBool where\n  | True\n  | False");
+        assert_eq!(lean_output, "inductive MyBool where\n  | True\n  | False\nderiving BEq, Repr");
         assert!(
             validate_lean_code(&lean_output).is_ok(),
             "Generated Lean code failed validation"
@@ -174,12 +182,13 @@ mod tests {
                     fields: vec![Type::Int, Type::Named("List".to_string())],
                 },
             ],
+            attributes: vec![],
         };
 
         let lean_output = list_type.to_lean();
         assert_eq!(
             lean_output,
-            "inductive List where\n  | Nil\n  | Cons : Int → List → List"
+            "inductive List where\n  | Nil\n  | Cons : Int → List → List\nderiving BEq, Repr"
         );
         assert!(
             validate_lean_code(&lean_output).is_ok(),
@@ -201,12 +210,13 @@ mod tests {
                     fields: vec![Type::Int, Type::Named("ilist".to_string())],
                 },
             ],
+            attributes: vec![],
         };
 
         let lean_code = ilist_type.to_lean();
         assert_eq!(
             lean_code,
-            "inductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist"
+            "inductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr"
         );
         assert!(
             validate_lean_code(&lean_code).is_ok(),
@@ -228,6 +238,7 @@ mod tests {
                     fields: vec![Type::Int, Type::Named("ilist".to_string())],
                 },
             ],
+            attributes: vec![],
         };
 
         let len_function = LetBinding {
@@ -274,13 +285,41 @@ mod tests {
         let lean_code = format!("{}\n\n{}", ilist_type.to_lean(), len_function.to_lean());
         assert_eq!(
             lean_code,
-            "inductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\n\ndef len (l : ilist) (n : Int) : Bool := match l with\n  | .Nil => (n == 0)\n  | .Cons _ rest => len rest (n - 1)"
+            "inductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr\n\ndef len (l : ilist) (n : Int) : Bool := match l with\n  | .Nil => (n == 0)\n  | .Cons _ rest => len rest (n - 1)"
         );
-        validate_lean_code(&lean_code).unwrap_or_else(|e| {
-            panic!(
-                "Lean code validation failed:\n{}\n\nError: {}",
-                lean_code, e
-            )
-        });
+        validate_lean_code(&lean_code).unwrap();
+    }
+
+    #[test]
+    fn test_function_with_one_attribute() {
+        let func = LetBinding {
+            name: "foo".to_string(),
+            is_recursive: false,
+            params: vec![("x".to_string(), Type::Int)],
+            return_type: Some(Type::Int),
+            body: Expression::Variable("x".to_string()),
+            attributes: vec!["simp".to_string()],
+        };
+
+        let lean_code = func.to_lean();
+        assert_eq!(lean_code, "@[simp]\ndef foo (x : Int) : Int := x");
+        validate_lean_code(&lean_code).unwrap();
+    }
+
+    #[test]
+    fn test_function_with_two_attributes() {
+        let func = LetBinding {
+            name: "bar".to_string(),
+            is_recursive: false,
+            params: vec![("y".to_string(), Type::Bool)],
+            return_type: Some(Type::Bool),
+            body: Expression::Variable("y".to_string()),
+            attributes: vec!["simp".to_string(), "grind".to_string()],
+        };
+
+        let lean_code = func.to_lean();
+        assert!(lean_code.contains("@[simp, grind]"), "Expected attribute annotation @[simp, grind] in output, got: {}", lean_code);
+        assert!(lean_code.starts_with("@[simp, grind]"), "Attributes should be at the start, got: {}", lean_code);
+        validate_lean_code(&lean_code).unwrap();
     }
 }

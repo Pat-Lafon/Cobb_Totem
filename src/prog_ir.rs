@@ -126,6 +126,7 @@ impl ToLean for Type {
 pub struct TypeDecl {
     pub name: String,
     pub variants: Vec<Variant>,
+    pub attributes: Vec<String>,
 }
 
 impl fmt::Display for TypeDecl {
@@ -152,7 +153,13 @@ impl ToLean for TypeDecl {
             .collect::<Vec<_>>()
             .join("\n  | ");
 
-        format!("inductive {} where\n  | {}", self.name, variants_str)
+        let attrs_str = if self.attributes.is_empty() {
+            String::new()
+        } else {
+            format!("@[{}]\n", self.attributes.join(", "))
+        };
+
+        format!("{}inductive {} where\n  | {}\nderiving BEq, Repr", attrs_str, self.name, variants_str)
     }
 }
 
@@ -548,6 +555,7 @@ mod tests {
                     fields: vec![Type::Int, Type::Named("int list".to_string())],
                 },
             ],
+            attributes: vec![],
         };
         assert_eq!(
             ilist.to_string(),
