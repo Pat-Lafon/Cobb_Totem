@@ -527,7 +527,90 @@ impl fmt::Display for AstNode {
 
 #[cfg(test)]
 mod tests {
-    use crate::prog_ir::{ConstructorName, Expression, Literal, Pattern, Type, TypeDecl, Variant};
+    use crate::ocamlparser::OcamlParser;
+    use crate::prog_ir::{
+        AstNode, BinaryOp, ConstructorName, Expression, Literal, Pattern, Type, TypeDecl, Variant,
+    };
+
+    #[test]
+    fn test_parse_sorted_predicate() {
+        // Define the sorted predicate with nested matches
+        let sorted_def = "let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (h, t) -> match t with | Nil -> true | Cons (h2, t2) -> (h <= h2) && sorted (Cons (h2, t2))";
+
+        // Parse the sorted predicate
+        let nodes = OcamlParser::parse_nodes(sorted_def).expect("Failed to parse sorted predicate");
+
+        // Verify that the predicate parsed successfully
+        assert_eq!(nodes.len(), 1, "Expected exactly one node");
+
+        // Construct the expected AST
+        let expected = AstNode::LetBinding(crate::prog_ir::LetBinding {
+            name: "sorted".to_string(),
+            attributes: vec!["simp".to_string(), "grind".to_string()],
+            is_recursive: true,
+            params: vec![("l".to_string(), Type::Named("ilist".to_string()))],
+            return_type: Some(Type::Bool),
+            body: Expression::Match(
+                Box::new(Expression::Variable("l".to_string())),
+                vec![
+                    (
+                        Pattern::Constructor(ConstructorName::Simple("Nil".to_string()), vec![]),
+                        Expression::Literal(Literal::Bool(true)),
+                    ),
+                    (
+                        Pattern::Constructor(
+                            ConstructorName::Simple("Cons".to_string()),
+                            vec![
+                                Pattern::Variable("h".to_string()),
+                                Pattern::Variable("t".to_string()),
+                            ],
+                        ),
+                        Expression::Match(
+                            Box::new(Expression::Variable("t".to_string())),
+                            vec![
+                                (
+                                    Pattern::Constructor(
+                                        ConstructorName::Simple("Nil".to_string()),
+                                        vec![],
+                                    ),
+                                    Expression::Literal(Literal::Bool(true)),
+                                ),
+                                (
+                                    Pattern::Constructor(
+                                        ConstructorName::Simple("Cons".to_string()),
+                                        vec![
+                                            Pattern::Variable("h2".to_string()),
+                                            Pattern::Variable("t2".to_string()),
+                                        ],
+                                    ),
+                                    Expression::BinaryOp(
+                                        Box::new(Expression::BinaryOp(
+                                            Box::new(Expression::Variable("h".to_string())),
+                                            BinaryOp::Lte,
+                                            Box::new(Expression::Variable("h2".to_string())),
+                                        )),
+                                        BinaryOp::And,
+                                        Box::new(Expression::Application(
+                                            Box::new(Expression::Variable("sorted".to_string())),
+                                            vec![Expression::Constructor(
+                                                ConstructorName::Simple("Cons".to_string()),
+                                                vec![
+                                                    Expression::Variable("h2".to_string()),
+                                                    Expression::Variable("t2".to_string()),
+                                                ],
+                                            )],
+                                        )),
+                                    ),
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            ),
+        });
+
+        assert_eq!(nodes[0], expected);
+    }
 
     #[test]
     fn test_variant_display() {

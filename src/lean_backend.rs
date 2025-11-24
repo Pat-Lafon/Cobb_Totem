@@ -47,15 +47,15 @@ impl ToLean for Expression {
             Expression::Variable(name) => name.clone(),
             Expression::Constructor(name, args) => {
                 if args.is_empty() {
-                    name.to_string()
+                    format!(".{}", name)
                 } else {
                     format!(
-                        "{}({})",
+                        "(.{} {})",
                         name,
                         args.iter()
                             .map(|e| e.to_lean())
                             .collect::<Vec<_>>()
-                            .join(", ")
+                            .join(" ")
                     )
                 }
             }
