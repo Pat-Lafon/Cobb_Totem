@@ -224,29 +224,29 @@ let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true 
     }
 }
 
+/// Helper to create an ilist type definition
+pub fn create_ilist_type() -> prog_ir::TypeDecl {
+    prog_ir::TypeDecl {
+        name: "ilist".to_string(),
+        variants: vec![
+            prog_ir::Variant {
+                name: "Nil".to_string(),
+                fields: vec![],
+            },
+            prog_ir::Variant {
+                name: "Cons".to_string(),
+                fields: vec![Type::Int, Type::Named("ilist".to_string())],
+            },
+        ],
+        attributes: vec![],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::lean_validation::validate_lean_code;
-
-    /// Helper to create an ilist type definition
-    fn create_ilist_type() -> prog_ir::TypeDecl {
-        prog_ir::TypeDecl {
-            name: "ilist".to_string(),
-            variants: vec![
-                prog_ir::Variant {
-                    name: "Nil".to_string(),
-                    fields: vec![],
-                },
-                prog_ir::Variant {
-                    name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
-                },
-            ],
-            attributes: vec![],
-        }
-    }
 
     #[test]
     fn test_axiom_with_prelude() {

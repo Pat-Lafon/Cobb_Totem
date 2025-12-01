@@ -1,7 +1,7 @@
 /// Lean backend for outputting AST to Lean 4 syntax
 ///
 use crate::{
-    ToLean, VarName,
+    ToLean,
     prog_ir::{AstNode, BinaryOp, Expression, LetBinding, UnaryOp},
 };
 
@@ -141,13 +141,19 @@ pub struct LeanContextBuilder {
     types_with_theorems: std::collections::HashMap<String, String>, // type_name -> theorems
 }
 
-impl LeanContextBuilder {
-    pub fn new() -> Self {
+impl Default for LeanContextBuilder {
+    fn default() -> Self {
         LeanContextBuilder {
             nodes: Vec::new(),
             axioms: Vec::new(),
             types_with_theorems: std::collections::HashMap::new(),
         }
+    }
+}
+
+impl LeanContextBuilder {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     pub fn with_nodes(mut self, nodes: Vec<AstNode>) -> Self {
@@ -194,9 +200,11 @@ mod tests {
     use crate::{
         lean_validation::validate_lean_code,
         prog_ir::{ConstructorName, Literal, Pattern, Type, TypeDecl, Variant},
+        VarName,
     };
 
     use super::*;
+    use crate::spec_ir;
 
     #[test]
     fn test_simple_bool_type() {
@@ -256,20 +264,7 @@ mod tests {
 
     #[test]
     fn test_ilist_type() {
-        let ilist_type = TypeDecl {
-            name: "ilist".to_string(),
-            variants: vec![
-                Variant {
-                    name: "Nil".to_string(),
-                    fields: vec![],
-                },
-                Variant {
-                    name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
-                },
-            ],
-            attributes: vec![],
-        };
+        let ilist_type = spec_ir::create_ilist_type();
 
         let lean_code = ilist_type.to_lean();
         assert_eq!(
@@ -284,20 +279,7 @@ mod tests {
 
     #[test]
     fn test_len_function() {
-        let ilist_type = TypeDecl {
-            name: "ilist".to_string(),
-            variants: vec![
-                Variant {
-                    name: "Nil".to_string(),
-                    fields: vec![],
-                },
-                Variant {
-                    name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
-                },
-            ],
-            attributes: vec![],
-        };
+        let ilist_type = spec_ir::create_ilist_type();
 
         let len_function = LetBinding {
             name: VarName::new("len"),
@@ -391,20 +373,8 @@ mod tests {
 
     #[test]
     fn test_ilist_with_lawful_beq() {
-        let ilist_type = TypeDecl {
-            name: "ilist".to_string(),
-            variants: vec![
-                Variant {
-                    name: "Nil".to_string(),
-                    fields: vec![],
-                },
-                Variant {
-                    name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
-                },
-            ],
-            attributes: vec!["grind".to_string()],
-        };
+        let mut ilist_type = spec_ir::create_ilist_type();
+        ilist_type.attributes = vec!["grind".to_string()];
 
         let inductive_def = ilist_type.to_lean();
         let lawful_support = ilist_type.generate_complete_lawful_beq();
