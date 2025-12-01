@@ -91,6 +91,7 @@ mod tests {
             name: "test".to_string(),
             params,
             body,
+            proof: None,
         };
 
         assert!(axiom.validate_no_free_variables().is_err());
@@ -118,6 +119,7 @@ mod tests {
             name: "test".to_string(),
             params,
             body,
+            proof: None,
         };
 
         assert!(axiom.validate_no_free_variables().is_ok());

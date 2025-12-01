@@ -7,7 +7,9 @@
 - Use `panic!()` for validation failures when parsing is expected to succeed (parser invariant violations)
 - Validate node types with explicit checks: `if node.kind() != "expected_kind"` rather than silent skipping
 - Provide descriptive panic messages that indicate what was expected vs. what was found
+- **Always include the underlying error message when panicking on an error**, using patterns like `panic!("Failed to parse: {}", e)` to preserve diagnostic information
 - **Never create dummy nodes** as fallback values (e.g., `Expression::Variable("")`). Panic instead.
+- **Never silently discard return values with `let _ = result;`** - always explicitly handle the result with assertions or explicit error handling
 
 Example pattern:
 ```rust
@@ -21,6 +23,8 @@ assert_eq!(node.kind(), "expected_type", "Expected 'expected_type', got '{}'", n
 - Do not create additional binaries during development or testing
 - Use tests instead: add test cases to verify functionality
 - Tests in the codebase serve as both validation and documentation
+- **Tests must make assertions, not just print output.** Every test should verify behavior with `assert!()`, `assert_eq!()`, or similar macros
+- Use `println!()` only for debugging during development; remove before committing
 
 ## Git Operations
 

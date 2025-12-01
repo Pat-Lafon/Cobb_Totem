@@ -166,6 +166,184 @@ impl ToLean for TypeDecl {
     }
 }
 
+impl TypeDecl {
+    /// Generate LawfulBEq helper theorems for beq behavior on constructor combinations
+    fn generate_beq_theorems(&self) -> String {
+        let mut theorems = Vec::new();
+
+        for variant1 in &self.variants {
+            for variant2 in &self.variants {
+                if variant1.name == variant2.name {
+                    // Same constructors - generates (beq_cons_cons style)
+                    if variant1.fields.is_empty() {
+                        // Both are nullary constructors
+                        let theorem_name = format!(
+                            "{}.beq_{}_{}",
+                            self.name,
+                            variant1.name.to_lowercase(),
+                            variant2.name.to_lowercase()
+                        );
+                        let theorem = format!(
+                            "@[simp, grind =] theorem {} : ({}.{} == {}.{}) = true := rfl",
+                            theorem_name, self.name, variant1.name, self.name, variant2.name
+                        );
+                        theorems.push(theorem);
+                    } else {
+                        // Both are n-ary constructors - need parameters
+                        let param_names1: Vec<String> = variant1
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .map(|(i, _)| format!("x{}", i))
+                            .collect();
+                        let param_names2: Vec<String> = variant2
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .map(|(i, _)| format!("y{}", i))
+                            .collect();
+
+                        let params1 = param_names1.join(" ");
+                        let params2 = param_names2.join(" ");
+
+                        let eq_checks = param_names1
+                            .iter()
+                            .zip(param_names2.iter())
+                            .map(|(x, y)| format!("{} == {}", x, y))
+                            .collect::<Vec<_>>()
+                            .join(" && ");
+
+                        let theorem_name = format!(
+                            "{}.beq_{}_{}",
+                            self.name,
+                            variant1.name.to_lowercase(),
+                            variant2.name.to_lowercase()
+                        );
+                        let theorem = format!(
+                            "@[simp, grind =] theorem {} :\n  ({}.{} {} == {}.{} {}) = ({}) := rfl",
+                            theorem_name,
+                            self.name,
+                            variant1.name,
+                            params1,
+                            self.name,
+                            variant2.name,
+                            params2,
+                            eq_checks
+                        );
+                        theorems.push(theorem);
+                    }
+                } else {
+                    // Different constructors - always false
+                    let theorem_name = format!(
+                        "{}.beq_{}_{}",
+                        self.name,
+                        variant1.name.to_lowercase(),
+                        variant2.name.to_lowercase()
+                    );
+                    let params1 = if variant1.fields.is_empty() {
+                        String::new()
+                    } else {
+                        let vars: Vec<String> = variant1
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .map(|(i, _)| format!("x{}", i))
+                            .collect();
+                        format!(" {}", vars.join(" "))
+                    };
+                    let params2 = if variant2.fields.is_empty() {
+                        String::new()
+                    } else {
+                        let vars: Vec<String> = variant2
+                            .fields
+                            .iter()
+                            .enumerate()
+                            .map(|(i, _)| format!("y{}", i))
+                            .collect();
+                        format!(" {}", vars.join(" "))
+                    };
+                    let theorem = format!(
+                        "@[simp, grind =] theorem {} : ({}.{}{} == {}.{}{}) = false := rfl",
+                        theorem_name,
+                        self.name,
+                        variant1.name,
+                        params1,
+                        self.name,
+                        variant2.name,
+                        params2
+                    );
+                    theorems.push(theorem);
+                }
+            }
+        }
+
+        theorems.join("\n")
+    }
+
+    /// Generate LawfulBEq instance for this type
+    fn generate_lawful_beq_instance(&self) -> String {
+        // For eq_of_beq, use induction on `a` generalizing `b` and use grind for each case
+        let eq_of_beq_cases = {
+            let mut cases = Vec::new();
+            for v in &self.variants {
+                let params = if v.fields.is_empty() {
+                    String::new()
+                } else {
+                    let vars: Vec<String> = v
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .map(|(i, _)| format!("x{}", i))
+                        .collect();
+                    format!(" {}", vars.join(" "))
+                };
+                cases.push(format!(
+                    "    | {} => grind",
+                    format!("{}{}", v.name, params)
+                ));
+            }
+            cases.join("\n")
+        };
+
+        let rfl_cases = self
+            .variants
+            .iter()
+            .enumerate()
+            .map(|(_i, v)| {
+                if v.fields.is_empty() {
+                    format!("    | {} => grind", v.name)
+                } else {
+                    // Generate parameter names and include the inductive hypothesis
+                    let vars: Vec<String> = v
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .map(|(j, _)| format!("x{}", j))
+                        .collect();
+                    let params_str = vars.join(" ");
+                    // The inductive hypothesis is automatically added by Lean as 'ih'
+                    format!("    | {} {} ih => grind", v.name, params_str)
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        format!(
+            "@[grind ., simp]\ninstance : LawfulBEq {} where\n  eq_of_beq {{a b}} h := by\n    induction a generalizing b with\n{}\n  rfl {{a}} := by\n    induction a with\n{}",
+            self.name, eq_of_beq_cases, rfl_cases
+        )
+    }
+
+    /// Generate complete LawfulBEq support (theorems + instance) for this type
+    pub fn generate_complete_lawful_beq(&self) -> String {
+        format!(
+            "{}\n\n{}",
+            self.generate_beq_theorems(),
+            self.generate_lawful_beq_instance()
+        )
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Variant {
     pub name: String,
@@ -538,7 +716,8 @@ mod tests {
         let sorted_def = "let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (h, t) -> match t with | Nil -> true | Cons (h2, t2) -> (h <= h2) && sorted (Cons (h2, t2))";
 
         // Parse the sorted predicate
-        let nodes = OcamlParser::parse_nodes(sorted_def).expect("Failed to parse sorted predicate");
+        let nodes = OcamlParser::parse_nodes(sorted_def)
+            .unwrap_or_else(|e| panic!("Failed to parse sorted predicate: {}", e));
 
         // Verify that the predicate parsed successfully
         assert_eq!(nodes.len(), 1, "Expected exactly one node");
@@ -677,5 +856,156 @@ mod tests {
             vec![Pattern::Wildcard, Pattern::Variable("rest".to_string())],
         );
         assert_eq!(constructor.to_string(), "Cons(_, rest)");
+    }
+
+    #[test]
+    fn test_complete_lawful_beq_simple() {
+        let bool_type = TypeDecl {
+            name: "MyBool".to_string(),
+            variants: vec![
+                Variant {
+                    name: "True".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "False".to_string(),
+                    fields: vec![],
+                },
+            ],
+            attributes: vec!["grind".to_string()],
+        };
+
+        // Verify theorem generation
+        let theorems = bool_type.generate_beq_theorems();
+        let expected = "@[simp, grind =] theorem MyBool.beq_true_true : (MyBool.True == MyBool.True) = true := rfl\n\
+                       @[simp, grind =] theorem MyBool.beq_true_false : (MyBool.True == MyBool.False) = false := rfl\n\
+                       @[simp, grind =] theorem MyBool.beq_false_true : (MyBool.False == MyBool.True) = false := rfl\n\
+                       @[simp, grind =] theorem MyBool.beq_false_false : (MyBool.False == MyBool.False) = true := rfl";
+        assert_eq!(theorems, expected);
+
+        // Verify instance structure
+        let instance = bool_type.generate_lawful_beq_instance();
+        assert!(instance.contains("instance : LawfulBEq MyBool"));
+        assert!(instance.contains("eq_of_beq"));
+        assert!(instance.contains("induction a generalizing b with"));
+        assert!(instance.contains("| True => grind"));
+        assert!(instance.contains("| False => grind"));
+
+        // Validate complete lawful beq (theorems + instance) with Lean code
+        let complete = bool_type.generate_complete_lawful_beq();
+        let lean_code = crate::lean_backend::LeanContextBuilder::new()
+            .with_nodes(vec![AstNode::TypeDeclaration(bool_type)])
+            .with_type_theorems("MyBool", complete)
+            .build();
+        crate::lean_validation::validate_lean_code(&lean_code).unwrap_or_else(|e| {
+            panic!(
+                "Generated complete lawful beq should be valid Lean code, but got error: {}",
+                e
+            )
+        });
+    }
+
+    #[test]
+    fn test_complete_lawful_beq_ilist() {
+        let ilist_type = TypeDecl {
+            name: "ilist".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Nil".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "Cons".to_string(),
+                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
+                },
+            ],
+            attributes: vec!["grind".to_string()],
+        };
+
+        // Verify theorem generation
+        let theorems = ilist_type.generate_beq_theorems();
+        // Should have theorems for Nil-Nil, Nil-Cons, Cons-Nil, Cons-Cons
+        assert!(theorems.contains("beq_nil_nil"));
+        assert!(theorems.contains("beq_nil_cons"));
+        assert!(theorems.contains("beq_cons_nil"));
+        assert!(theorems.contains("beq_cons_cons"));
+        // Cons-Cons should have parameter checking
+        assert!(theorems.contains("x0 == y0"));
+
+        // Verify instance structure
+        let instance = ilist_type.generate_lawful_beq_instance();
+        assert!(instance.contains("instance : LawfulBEq ilist"));
+        assert!(instance.contains("induction a generalizing b with"));
+        assert!(instance.contains("| Nil => grind"));
+        assert!(instance.contains("| Cons x0 x1 => grind"));
+
+        // Validate complete lawful beq (theorems + instance) with Lean code
+        let complete = ilist_type.generate_complete_lawful_beq();
+        let lean_code = crate::lean_backend::LeanContextBuilder::new()
+            .with_nodes(vec![AstNode::TypeDeclaration(ilist_type)])
+            .with_type_theorems("ilist", complete)
+            .build();
+        crate::lean_validation::validate_lean_code(&lean_code).unwrap_or_else(|e| {
+            panic!(
+                "Generated complete lawful beq should be valid Lean code, but got error: {}",
+                e
+            )
+        });
+    }
+
+    #[test]
+    fn test_output_ilist() {
+        let ilist_type = TypeDecl {
+            name: "ilist".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Nil".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "Cons".to_string(),
+                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
+                },
+            ],
+            attributes: vec![],
+        };
+
+        let beq_theorems = ilist_type.generate_beq_theorems();
+        let expected_beq = "@[simp, grind =] theorem ilist.beq_nil_nil : (ilist.Nil == ilist.Nil) = true := rfl\n\
+                            @[simp, grind =] theorem ilist.beq_nil_cons : (ilist.Nil == ilist.Cons y0 y1) = false := rfl\n\
+                            @[simp, grind =] theorem ilist.beq_cons_nil : (ilist.Cons x0 x1 == ilist.Nil) = false := rfl\n\
+                            @[simp, grind =] theorem ilist.beq_cons_cons :\n  (ilist.Cons x0 x1 == ilist.Cons y0 y1) = (x0 == y0 && x1 == y1) := rfl";
+        assert_eq!(beq_theorems, expected_beq);
+
+        let lawful_beq = ilist_type.generate_lawful_beq_instance();
+        let expected_lawful = "@[grind ., simp]\ninstance : LawfulBEq ilist where\n  eq_of_beq {a b} h := by\n    induction a generalizing b with\n    | Nil => grind\n    | Cons x0 x1 => grind\n  rfl {a} := by\n    induction a with\n    | Nil => grind\n    | Cons x0 x1 ih => grind";
+        assert_eq!(lawful_beq, expected_lawful);
+    }
+
+    #[test]
+    fn test_complete_lawful_beq() {
+        let ilist_type = TypeDecl {
+            name: "ilist".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Nil".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "Cons".to_string(),
+                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
+                },
+            ],
+            attributes: vec![],
+        };
+
+        let complete = ilist_type.generate_complete_lawful_beq();
+        let expected_complete = "@[simp, grind =] theorem ilist.beq_nil_nil : (ilist.Nil == ilist.Nil) = true := rfl\n\
+                                 @[simp, grind =] theorem ilist.beq_nil_cons : (ilist.Nil == ilist.Cons y0 y1) = false := rfl\n\
+                                 @[simp, grind =] theorem ilist.beq_cons_nil : (ilist.Cons x0 x1 == ilist.Nil) = false := rfl\n\
+                                 @[simp, grind =] theorem ilist.beq_cons_cons :\n  (ilist.Cons x0 x1 == ilist.Cons y0 y1) = (x0 == y0 && x1 == y1) := rfl\n\
+                                 \n\
+                                 @[grind ., simp]\ninstance : LawfulBEq ilist where\n  eq_of_beq {a b} h := by\n    induction a generalizing b with\n    | Nil => grind\n    | Cons x0 x1 => grind\n  rfl {a} := by\n    induction a with\n    | Nil => grind\n    | Cons x0 x1 ih => grind";
+        assert_eq!(complete, expected_complete);
     }
 }

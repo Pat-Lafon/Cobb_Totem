@@ -134,6 +134,61 @@ impl ToLean for AstNode {
     }
 }
 
+/// Builder for constructing Lean code with automatic theorem attachment to types
+pub struct LeanContextBuilder {
+    nodes: Vec<AstNode>,
+    axioms: Vec<crate::spec_ir::Axiom>,
+    types_with_theorems: std::collections::HashMap<String, String>, // type_name -> theorems
+}
+
+impl LeanContextBuilder {
+    pub fn new() -> Self {
+        LeanContextBuilder {
+            nodes: Vec::new(),
+            axioms: Vec::new(),
+            types_with_theorems: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn with_nodes(mut self, nodes: Vec<AstNode>) -> Self {
+        self.nodes = nodes;
+        self
+    }
+
+    pub fn with_axioms(mut self, axioms: Vec<crate::spec_ir::Axiom>) -> Self {
+        self.axioms = axioms;
+        self
+    }
+
+    /// Attach BEq theorems to a specific type by name
+    pub fn with_type_theorems(mut self, type_name: &str, theorems: String) -> Self {
+        self.types_with_theorems.insert(type_name.to_string(), theorems);
+        self
+    }
+
+    /// Build the final Lean code
+    pub fn build(self) -> String {
+        self.nodes
+            .iter()
+            .map(|node| {
+                match node {
+                    AstNode::TypeDeclaration(type_decl) => {
+                        match self.types_with_theorems.get(&type_decl.name) {
+                            Some(theorems) => {
+                                format!("{}\n\n{}", type_decl.to_lean(), theorems)
+                            }
+                            None => type_decl.to_lean(),
+                        }
+                    }
+                    other => other.to_lean(),
+                }
+            })
+            .chain(self.axioms.iter().map(|axiom| axiom.to_lean()))
+            .collect::<Vec<_>>()
+            .join("\n\n")
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
@@ -332,5 +387,32 @@ mod tests {
             lean_code
         );
         validate_lean_code(&lean_code).unwrap();
+    }
+
+    #[test]
+    fn test_ilist_with_lawful_beq() {
+        let ilist_type = TypeDecl {
+            name: "ilist".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Nil".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "Cons".to_string(),
+                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
+                },
+            ],
+            attributes: vec!["grind".to_string()],
+        };
+
+        let inductive_def = ilist_type.to_lean();
+        let lawful_support = ilist_type.generate_complete_lawful_beq();
+        let full_code = format!("{}\n\n{}", inductive_def, lawful_support);
+
+        // Verify the code validates
+        validate_lean_code(&full_code).unwrap_or_else(|e| {
+            panic!("Generated LawfulBEq code failed validation: {}", e)
+        });
     }
 }
