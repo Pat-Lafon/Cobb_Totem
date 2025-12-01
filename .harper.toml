@@ -1,0 +1,3 @@
+[linter]
+# Disable orthographic consistency checks
+incorrect_case = false
