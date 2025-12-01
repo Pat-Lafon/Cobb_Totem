@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::ToLean;
+use crate::{ToLean, VarName};
 
 /// Validates that a name is a valid constructor identifier.
 ///
@@ -532,7 +532,7 @@ impl ToLean for BinaryOp {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Pattern {
-    Variable(String),
+    Variable(VarName),
     Constructor(ConstructorName, Vec<Pattern>),
     Literal(Literal),
     Wildcard,
@@ -567,7 +567,7 @@ impl fmt::Display for Pattern {
 impl ToLean for Pattern {
     fn to_lean(&self) -> String {
         match self {
-            Pattern::Variable(name) => name.clone(),
+            Pattern::Variable(name) => name.to_string(),
             Pattern::Constructor(name, patterns) => {
                 if patterns.is_empty() {
                     format!(".{}", name)
@@ -591,7 +591,7 @@ impl ToLean for Pattern {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
-    Variable(String),
+    Variable(VarName),
     Constructor(ConstructorName, Vec<Expression>),
     Literal(Literal),
     UnaryOp(UnaryOp, Box<Expression>),
@@ -666,10 +666,10 @@ impl fmt::Display for Expression {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct LetBinding {
-    pub name: String,
+    pub name: VarName,
     pub attributes: Vec<String>,
     pub is_recursive: bool,
-    pub params: Vec<(String, Type)>,
+    pub params: Vec<(VarName, Type)>,
     pub return_type: Option<Type>,
     pub body: Expression,
 }
@@ -709,6 +709,7 @@ mod tests {
     use crate::prog_ir::{
         AstNode, BinaryOp, ConstructorName, Expression, Literal, Pattern, Type, TypeDecl, Variant,
     };
+    use crate::VarName;
 
     #[test]
     fn test_parse_sorted_predicate() {
@@ -724,13 +725,13 @@ mod tests {
 
         // Construct the expected AST
         let expected = AstNode::LetBinding(crate::prog_ir::LetBinding {
-            name: "sorted".to_string(),
+            name: VarName::new("sorted"),
             attributes: vec!["simp".to_string(), "grind".to_string()],
             is_recursive: true,
-            params: vec![("l".to_string(), Type::Named("ilist".to_string()))],
+            params: vec![(VarName::new("l"), Type::Named("ilist".to_string()))],
             return_type: Some(Type::Bool),
             body: Expression::Match(
-                Box::new(Expression::Variable("l".to_string())),
+                Box::new(Expression::Variable("l".into())),
                 vec![
                     (
                         Pattern::Constructor(ConstructorName::Simple("Nil".to_string()), vec![]),
@@ -740,12 +741,12 @@ mod tests {
                         Pattern::Constructor(
                             ConstructorName::Simple("Cons".to_string()),
                             vec![
-                                Pattern::Variable("h".to_string()),
-                                Pattern::Variable("t".to_string()),
+                                Pattern::Variable("h".into()),
+                                Pattern::Variable("t".into()),
                             ],
                         ),
                         Expression::Match(
-                            Box::new(Expression::Variable("t".to_string())),
+                            Box::new(Expression::Variable("t".into())),
                             vec![
                                 (
                                     Pattern::Constructor(
@@ -758,24 +759,24 @@ mod tests {
                                     Pattern::Constructor(
                                         ConstructorName::Simple("Cons".to_string()),
                                         vec![
-                                            Pattern::Variable("h2".to_string()),
-                                            Pattern::Variable("t2".to_string()),
+                                            Pattern::Variable("h2".into()),
+                                            Pattern::Variable("t2".into()),
                                         ],
                                     ),
                                     Expression::BinaryOp(
                                         Box::new(Expression::BinaryOp(
-                                            Box::new(Expression::Variable("h".to_string())),
+                                            Box::new(Expression::Variable("h".into())),
                                             BinaryOp::Lte,
-                                            Box::new(Expression::Variable("h2".to_string())),
+                                            Box::new(Expression::Variable("h2".into())),
                                         )),
                                         BinaryOp::And,
                                         Box::new(Expression::Application(
-                                            Box::new(Expression::Variable("sorted".to_string())),
+                                            Box::new(Expression::Variable("sorted".into())),
                                             vec![Expression::Constructor(
                                                 ConstructorName::Simple("Cons".to_string()),
                                                 vec![
-                                                    Expression::Variable("h2".to_string()),
-                                                    Expression::Variable("t2".to_string()),
+                                                    Expression::Variable("h2".into()),
+                                                    Expression::Variable("t2".into()),
                                                 ],
                                             )],
                                         )),
@@ -836,7 +837,7 @@ mod tests {
         let bool_lit = Expression::Literal(Literal::Bool(true));
         assert_eq!(bool_lit.to_string(), "true");
 
-        let var = Expression::Variable("x".to_string());
+        let var = Expression::Variable("x".into());
         assert_eq!(var.to_string(), "x");
     }
 
@@ -845,7 +846,7 @@ mod tests {
         let wildcard = Pattern::Wildcard;
         assert_eq!(wildcard.to_string(), "_");
 
-        let var = Pattern::Variable("x".to_string());
+        let var = Pattern::Variable("x".into());
         assert_eq!(var.to_string(), "x");
 
         let int_lit = Pattern::Literal(Literal::Int(0));
@@ -853,7 +854,7 @@ mod tests {
 
         let constructor = Pattern::Constructor(
             ConstructorName::Simple("Cons".to_string()),
-            vec![Pattern::Wildcard, Pattern::Variable("rest".to_string())],
+            vec![Pattern::Wildcard, Pattern::Variable("rest".into())],
         );
         assert_eq!(constructor.to_string(), "Cons(_, rest)");
     }

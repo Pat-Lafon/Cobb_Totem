@@ -1,14 +1,17 @@
 use itertools::Itertools as _;
 
-use crate::spec_ir::{Axiom, Expression, Proposition};
+use crate::{
+    spec_ir::{Axiom, Expression, Proposition},
+    VarName,
+};
 
-pub fn collect_all_variables(prop: &Proposition) -> std::collections::HashSet<String> {
+pub fn collect_all_variables(prop: &Proposition) -> std::collections::HashSet<VarName> {
     let mut vars = std::collections::HashSet::new();
     collect_variables_in_prop(prop, &mut vars);
     vars
 }
 
-fn collect_variables_in_prop(prop: &Proposition, vars: &mut std::collections::HashSet<String>) {
+fn collect_variables_in_prop(prop: &Proposition, vars: &mut std::collections::HashSet<VarName>) {
     match prop {
         Proposition::Expr(expr) => collect_variables_in_expr(expr, vars),
         Proposition::Predicate(_, args) => {
@@ -28,7 +31,7 @@ fn collect_variables_in_prop(prop: &Proposition, vars: &mut std::collections::Ha
     }
 }
 
-fn collect_variables_in_expr(expr: &Expression, vars: &mut std::collections::HashSet<String>) {
+fn collect_variables_in_expr(expr: &Expression, vars: &mut std::collections::HashSet<VarName>) {
     match expr {
         Expression::Variable(name) => {
             vars.insert(name.clone());
@@ -72,7 +75,7 @@ mod tests {
     #[test]
     fn test_free_variable_detection() {
         let params = vec![Parameter::universal(
-            "l".to_string(),
+            "l",
             Type::Named("ilist".to_string()),
         )];
 
@@ -81,8 +84,8 @@ mod tests {
             Box::new(Proposition::Predicate(
                 "hd".to_string(),
                 vec![
-                    Expression::Variable("l".to_string()),
-                    Expression::Variable("x".to_string()), // Free variable!
+                    Expression::Variable("l".into()),
+                    Expression::Variable("x".into()), // Free variable!
                 ],
             )),
         );
@@ -100,8 +103,8 @@ mod tests {
     #[test]
     fn test_no_free_variables_success() {
         let params = vec![
-            Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-            Parameter::existential("x".to_string(), Type::Int),
+            Parameter::universal("l", Type::Named("ilist".to_string())),
+            Parameter::existential("x", Type::Int),
         ];
 
         let body = Proposition::Implication(
@@ -109,8 +112,8 @@ mod tests {
             Box::new(Proposition::Predicate(
                 "hd".to_string(),
                 vec![
-                    Expression::Variable("l".to_string()),
-                    Expression::Variable("x".to_string()),
+                    Expression::Variable("l".into()),
+                    Expression::Variable("x".into()),
                 ],
             )),
         );

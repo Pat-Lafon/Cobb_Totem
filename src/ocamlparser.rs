@@ -1,6 +1,9 @@
-use crate::prog_ir::{
-    AstNode, BinaryOp, ConstructorName, Expression, LetBinding, Literal, Pattern, Type, TypeDecl,
-    Variant,
+use crate::{
+    prog_ir::{
+        AstNode, BinaryOp, ConstructorName, Expression, LetBinding, Literal, Pattern, Type, TypeDecl,
+        Variant,
+    },
+    VarName,
 };
 use tree_sitter::Node;
 
@@ -77,7 +80,7 @@ impl OcamlParser {
     /// Example: "(x : int)" -> ("x", Type::Int)
     /// Special case: unit parameter -> ("()", Type::Unit)
     /// Panics if parameter lacks type annotation (except for unit).
-    fn parse_parameter(&self, param_node: Node) -> (String, Type) {
+    fn parse_parameter(&self, param_node: Node) -> (VarName, Type) {
         let mut cursor = param_node.walk();
         assert!(cursor.goto_first_child(), "Parameter has no children");
 
@@ -132,11 +135,11 @@ impl OcamlParser {
                 );
                 let ty = self.parse_type(type_node);
 
-                (name, ty)
+                (VarName::new(name), ty)
             }
             "unit" => {
                 // Unit parameter: represented as "()" with type Unit
-                ("()".to_string(), Type::Unit)
+                (VarName::new("()"), Type::Unit)
             }
             kind => {
                 panic!(
@@ -448,7 +451,7 @@ impl OcamlParser {
         Self::restore_cursor(cursor, "value_definition");
 
         LetBinding {
-            name,
+            name: VarName::new(name),
             attributes,
             is_recursive,
             params,
@@ -531,7 +534,7 @@ impl OcamlParser {
                         .next()
                         .map_or(false, |c| c.is_alphabetic() || c == '_');
                 assert!(valid_var, "Expected valid variable name, got '{}'", text);
-                Expression::Variable(text.to_string())
+                Expression::Variable(VarName::new(text))
             }
             "constructor_path" => {
                 // Extract constructor name
@@ -748,7 +751,7 @@ impl OcamlParser {
                 if text == "_" {
                     Pattern::Wildcard
                 } else {
-                    Pattern::Variable(text.to_string())
+                    Pattern::Variable(VarName::new(text))
                 }
             }
             "number" => Pattern::Literal(self.parse_number_from_node(node)),
@@ -914,6 +917,7 @@ impl OcamlParser {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::VarName;
 
     fn assert_parse(source: &str, expected: Vec<AstNode>) {
         let (parser, tree) = OcamlParser::parse_source(source).unwrap();
@@ -927,12 +931,12 @@ mod tests {
         body: Expression,
     ) -> AstNode {
         AstNode::LetBinding(LetBinding {
-            name: name.to_string(),
+            name: VarName::new(name),
             attributes: vec![],
             is_recursive: false,
             params: params
                 .into_iter()
-                .map(|(n, t)| (n.to_string(), t))
+                .map(|(n, t)| (VarName::new(n), t))
                 .collect(),
             return_type,
             body,
@@ -947,12 +951,12 @@ mod tests {
         body: Expression,
     ) -> AstNode {
         AstNode::LetBinding(LetBinding {
-            name: name.to_string(),
+            name: VarName::new(name),
             attributes: attrs.into_iter().map(|s| s.to_string()).collect(),
             is_recursive: true,
             params: params
                 .into_iter()
-                .map(|(n, t)| (n.to_string(), t))
+                .map(|(n, t)| (VarName::new(n), t))
                 .collect(),
             return_type,
             body,
@@ -1080,9 +1084,9 @@ mod tests {
                 vec![("x", Type::Int), ("y", Type::Int)],
                 Some(Type::Int),
                 Expression::BinaryOp(
-                    Box::new(Expression::Variable("x".to_string())),
+                    Box::new(Expression::Variable("x".into())),
                     BinaryOp::Add,
-                    Box::new(Expression::Variable("y".to_string())),
+                    Box::new(Expression::Variable("y".into())),
                 ),
             )],
         );
@@ -1096,7 +1100,7 @@ mod tests {
                 "f",
                 vec![("()", Type::Unit), ("x", Type::Int)],
                 Some(Type::Int),
-                Expression::Variable("x".to_string()),
+                Expression::Variable("x".into()),
             )],
         );
     }
@@ -1111,21 +1115,21 @@ mod tests {
                 vec![("n", Type::Int)],
                 Some(Type::Int),
                 Expression::Match(
-                    Box::new(Expression::Variable("n".to_string())),
+                    Box::new(Expression::Variable("n".into())),
                     vec![
                         (
                             Pattern::Literal(Literal::Int(0)),
                             Expression::Literal(Literal::Int(1)),
                         ),
                         (
-                            Pattern::Variable("x".to_string()),
+                            Pattern::Variable("x".into()),
                             Expression::BinaryOp(
-                                Box::new(Expression::Variable("x".to_string())),
+                                Box::new(Expression::Variable("x".into())),
                                 BinaryOp::Mul,
                                 Box::new(Expression::Application(
-                                    Box::new(Expression::Variable("factorial".to_string())),
+                                    Box::new(Expression::Variable("factorial".into())),
                                     vec![Expression::BinaryOp(
-                                        Box::new(Expression::Variable("x".to_string())),
+                                        Box::new(Expression::Variable("x".into())),
                                         BinaryOp::Sub,
                                         Box::new(Expression::Literal(Literal::Int(1))),
                                     )],
@@ -1148,7 +1152,7 @@ mod tests {
                 vec![("l", Type::Named("ilist".to_string())), ("n", Type::Int)],
                 Some(Type::Bool),
                 Expression::BinaryOp(
-                    Box::new(Expression::Variable("n".to_string())),
+                    Box::new(Expression::Variable("n".into())),
                     BinaryOp::Eq,
                     Box::new(Expression::Literal(Literal::Int(0))),
                 ),
@@ -1161,13 +1165,13 @@ mod tests {
         assert_parse(
             "let test (x : int) : bool = match x with | 0 -> true | _ -> false",
             vec![AstNode::LetBinding(LetBinding {
-                name: "test".to_string(),
+                name: VarName::new("test"),
                 attributes: vec![],
                 is_recursive: false,
-                params: vec![("x".to_string(), Type::Int)],
+                params: vec![(VarName::new("x"), Type::Int)],
                 return_type: Some(Type::Bool),
                 body: Expression::Match(
-                    Box::new(Expression::Variable("x".to_string())),
+                    Box::new(Expression::Variable("x".into())),
                     vec![
                         (
                             Pattern::Literal(Literal::Int(0)),
@@ -1205,16 +1209,16 @@ mod tests {
                 attributes: vec![],
             }),
             AstNode::LetBinding(LetBinding {
-                name: "len".to_string(),
+                name: VarName::new("len"),
                 attributes: vec!["reflect".to_string()],
                 is_recursive: true,
                 params: vec![
-                    ("l".to_string(), Type::Named("ilist".to_string())),
-                    ("n".to_string(), Type::Int),
+                    (VarName::new("l"), Type::Named("ilist".to_string())),
+                    (VarName::new("n"), Type::Int),
                 ],
                 return_type: Some(Type::Bool),
                 body: Expression::Match(
-                    Box::new(Expression::Variable("l".to_string())),
+                    Box::new(Expression::Variable("l".into())),
                     vec![
                         (
                             Pattern::Constructor(
@@ -1222,7 +1226,7 @@ mod tests {
                                 vec![],
                             ),
                             Expression::BinaryOp(
-                                Box::new(Expression::Variable("n".to_string())),
+                                Box::new(Expression::Variable("n".into())),
                                 BinaryOp::Eq,
                                 Box::new(Expression::Literal(Literal::Int(0))),
                             ),
@@ -1230,14 +1234,14 @@ mod tests {
                         (
                             Pattern::Constructor(
                                 ConstructorName::Simple("Cons".to_string()),
-                                vec![Pattern::Wildcard, Pattern::Variable("rest".to_string())],
+                                vec![Pattern::Wildcard, Pattern::Variable("rest".into())],
                             ),
                             Expression::Application(
-                                Box::new(Expression::Variable("len".to_string())),
+                                Box::new(Expression::Variable("len".into())),
                                 vec![
-                                    Expression::Variable("rest".to_string()),
+                                    Expression::Variable("rest".into()),
                                     Expression::BinaryOp(
-                                        Box::new(Expression::Variable("n".to_string())),
+                                        Box::new(Expression::Variable("n".into())),
                                         BinaryOp::Sub,
                                         Box::new(Expression::Literal(Literal::Int(1))),
                                     ),
@@ -1261,9 +1265,9 @@ mod tests {
                 vec![],
                 None,
                 Expression::BinaryOp(
-                    Box::new(Expression::Variable("x".to_string())),
+                    Box::new(Expression::Variable("x".into())),
                     BinaryOp::Add,
-                    Box::new(Expression::Variable("y".to_string())),
+                    Box::new(Expression::Variable("y".into())),
                 ),
             )],
         );
@@ -1278,7 +1282,7 @@ mod tests {
                 vec![],
                 None,
                 Expression::BinaryOp(
-                    Box::new(Expression::Variable("n".to_string())),
+                    Box::new(Expression::Variable("n".into())),
                     BinaryOp::Eq,
                     Box::new(Expression::Literal(Literal::Int(0))),
                 ),
@@ -1295,9 +1299,9 @@ mod tests {
                 vec![],
                 None,
                 Expression::BinaryOp(
-                    Box::new(Expression::Variable("a".to_string())),
+                    Box::new(Expression::Variable("a".into())),
                     BinaryOp::Neq,
-                    Box::new(Expression::Variable("b".to_string())),
+                    Box::new(Expression::Variable("b".into())),
                 ),
             )],
         );
@@ -1312,11 +1316,11 @@ mod tests {
                 vec![],
                 None,
                 Expression::Application(
-                    Box::new(Expression::Variable("len".to_string())),
+                    Box::new(Expression::Variable("len".into())),
                     vec![
-                        Expression::Variable("rest".to_string()),
+                        Expression::Variable("rest".into()),
                         Expression::BinaryOp(
-                            Box::new(Expression::Variable("n".to_string())),
+                            Box::new(Expression::Variable("n".into())),
                             BinaryOp::Sub,
                             Box::new(Expression::Literal(Literal::Int(1))),
                         ),
@@ -1336,12 +1340,12 @@ mod tests {
                 None,
                 Expression::BinaryOp(
                     Box::new(Expression::BinaryOp(
-                        Box::new(Expression::Variable("x".to_string())),
+                        Box::new(Expression::Variable("x".into())),
                         BinaryOp::Add,
-                        Box::new(Expression::Variable("y".to_string())),
+                        Box::new(Expression::Variable("y".into())),
                     )),
                     BinaryOp::Mul,
-                    Box::new(Expression::Variable("z".to_string())),
+                    Box::new(Expression::Variable("z".into())),
                 ),
             )],
         );
@@ -1355,7 +1359,7 @@ mod tests {
                 "test",
                 vec![],
                 None,
-                Expression::Variable("myVar".to_string()),
+                Expression::Variable("myVar".into()),
             )],
         );
     }
@@ -1385,7 +1389,7 @@ mod tests {
                     ConstructorName::Simple("Cons".to_string()),
                     vec![
                         Expression::Literal(Literal::Int(1)),
-                        Expression::Variable("rest".to_string()),
+                        Expression::Variable("rest".into()),
                     ],
                 ),
             )],
@@ -1397,13 +1401,13 @@ mod tests {
         let source =
             "let test (x : ilist) : bool = match x with | Nil -> true | Cons (_, _) -> false";
         let expected = vec![AstNode::LetBinding(LetBinding {
-            name: "test".to_string(),
+            name: VarName::new("test"),
             attributes: vec![],
             is_recursive: false,
-            params: vec![("x".to_string(), Type::Named("ilist".to_string()))],
+            params: vec![(VarName::new("x"), Type::Named("ilist".to_string()))],
             return_type: Some(Type::Bool),
             body: Expression::Match(
-                Box::new(Expression::Variable("x".to_string())),
+                Box::new(Expression::Variable("x".into())),
                 vec![
                     (
                         Pattern::Constructor(ConstructorName::Simple("Nil".to_string()), vec![]),
@@ -1427,17 +1431,17 @@ mod tests {
         let source = "let test (x : int) : bool = match x with | n -> n = 0";
 
         let expected = vec![AstNode::LetBinding(LetBinding {
-            name: "test".to_string(),
+            name: VarName::new("test"),
             attributes: vec![],
             is_recursive: false,
-            params: vec![("x".to_string(), Type::Int)],
+            params: vec![(VarName::new("x"), Type::Int)],
             return_type: Some(Type::Bool),
             body: Expression::Match(
-                Box::new(Expression::Variable("x".to_string())),
+                Box::new(Expression::Variable("x".into())),
                 vec![(
-                    Pattern::Variable("n".to_string()),
+                    Pattern::Variable("n".into()),
                     Expression::BinaryOp(
-                        Box::new(Expression::Variable("n".to_string())),
+                        Box::new(Expression::Variable("n".into())),
                         BinaryOp::Eq,
                         Box::new(Expression::Literal(Literal::Int(0))),
                     ),
@@ -1453,13 +1457,13 @@ mod tests {
         let source = "let test (x : int) : bool = match x with | List.Nil -> true | _ -> false";
 
         let expected = vec![AstNode::LetBinding(LetBinding {
-            name: "test".to_string(),
+            name: VarName::new("test"),
             attributes: vec![],
             is_recursive: false,
-            params: vec![("x".to_string(), Type::Int)],
+            params: vec![(VarName::new("x"), Type::Int)],
             return_type: Some(Type::Bool),
             body: Expression::Match(
-                Box::new(Expression::Variable("x".to_string())),
+                Box::new(Expression::Variable("x".into())),
                 vec![
                     (
                         Pattern::Constructor(
@@ -1484,13 +1488,13 @@ mod tests {
         let source = "let test (x : int) : bool = match x with | (0) -> true | _ -> false";
 
         let expected = vec![AstNode::LetBinding(LetBinding {
-            name: "test".to_string(),
+            name: VarName::new("test"),
             attributes: vec![],
             is_recursive: false,
-            params: vec![("x".to_string(), Type::Int)],
+            params: vec![(VarName::new("x"), Type::Int)],
             return_type: Some(Type::Bool),
             body: Expression::Match(
-                Box::new(Expression::Variable("x".to_string())),
+                Box::new(Expression::Variable("x".into())),
                 vec![
                     (
                         Pattern::Literal(Literal::Int(0)),

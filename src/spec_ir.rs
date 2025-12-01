@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    ToLean,
+    ToLean, VarName,
     ocamlparser::OcamlParser,
     prog_ir::{self, BinaryOp, ConstructorName, Type, UnaryOp},
 };
@@ -34,7 +34,7 @@ impl ToLean for Quantifier {
 /// A parameter in an axiom with its quantification mode
 #[derive(Debug, Clone)]
 pub struct Parameter {
-    pub name: String,
+    pub name: VarName,
     pub typ: Type,
     pub quantifier: Quantifier,
 }
@@ -71,7 +71,7 @@ pub enum Proposition {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Expression {
     /// Variable reference
-    Variable(String),
+    Variable(VarName),
 
     /// Integer literal
     Literal(i32),
@@ -87,17 +87,17 @@ pub enum Expression {
 }
 
 impl Parameter {
-    pub fn universal(name: String, typ: Type) -> Self {
+    pub fn universal(name: impl Into<VarName>, typ: Type) -> Self {
         Parameter {
-            name,
+            name: name.into(),
             typ,
             quantifier: Quantifier::Universal,
         }
     }
 
-    pub fn existential(name: String, typ: Type) -> Self {
+    pub fn existential(name: impl Into<VarName>, typ: Type) -> Self {
         Parameter {
-            name,
+            name: name.into(),
             typ,
             quantifier: Quantifier::Existential,
         }
@@ -183,7 +183,7 @@ impl ToLean for Proposition {
 impl ToLean for Expression {
     fn to_lean(&self) -> String {
         match self {
-            Expression::Variable(name) => name.clone(),
+            Expression::Variable(name) => name.to_string(),
             Expression::Literal(n) => n.to_string(),
             Expression::BinaryOp(left, op, right) => {
                 format!("({} {} {})", left.to_lean(), op.to_lean(), right.to_lean())
@@ -258,19 +258,19 @@ mod tests {
         let axiom = Axiom {
             name: "list_emp_no_hd".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("x".to_string(), Type::Named("Int".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("x", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
                     "emp".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
                     "hd".to_string(),
                     vec![
-                        Expression::Variable("l".to_string()),
-                        Expression::Variable("x".to_string()),
+                        Expression::Variable("l".into()),
+                        Expression::Variable("x".into()),
                     ],
                 )))),
             ),
@@ -310,19 +310,19 @@ mod tests {
         let axiom = Axiom {
             name: "list_emp_no_hd_with_beq".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("x".to_string(), Type::Named("Int".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("x", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
                     "emp".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
                     "hd".to_string(),
                     vec![
-                        Expression::Variable("l".to_string()),
-                        Expression::Variable("x".to_string()),
+                        Expression::Variable("l".into()),
+                        Expression::Variable("x".into()),
                     ],
                 )))),
             ),
@@ -363,19 +363,19 @@ mod tests {
         let axiom = Axiom {
             name: "list_emp_no_tl".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("l1".to_string(), Type::Named("ilist".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("l1", Type::Named("ilist".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
                     "emp".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
                     "tl".to_string(),
                     vec![
-                        Expression::Variable("l".to_string()),
-                        Expression::Variable("l1".to_string()),
+                        Expression::Variable("l".into()),
+                        Expression::Variable("l1".into()),
                     ],
                 )))),
             ),
@@ -414,20 +414,20 @@ mod tests {
         let axiom = Axiom {
             name: "list_hd_no_emp".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("x".to_string(), Type::Named("Int".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("x", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
                     "hd".to_string(),
                     vec![
-                        Expression::Variable("l".to_string()),
-                        Expression::Variable("x".to_string()),
+                        Expression::Variable("l".into()),
+                        Expression::Variable("x".into()),
                     ],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
                     "emp".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )))),
             ),
             proof: Some("grind".to_string()),
@@ -464,20 +464,20 @@ mod tests {
         let axiom = Axiom {
             name: "list_tl_no_emp".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("l1".to_string(), Type::Named("ilist".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("l1", Type::Named("ilist".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
                     "tl".to_string(),
                     vec![
-                        Expression::Variable("l".to_string()),
-                        Expression::Variable("l1".to_string()),
+                        Expression::Variable("l".into()),
+                        Expression::Variable("l1".into()),
                     ],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
                     "emp".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )))),
             ),
             proof: Some("grind".to_string()),
@@ -520,12 +520,12 @@ mod tests {
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
                     "emp".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Predicate(
                     "len".to_string(),
                     vec![
-                        Expression::Variable("l".to_string()),
+                        Expression::Variable("l".into()),
                         Expression::Literal(0),
                     ],
                 )),
@@ -564,27 +564,27 @@ mod tests {
         let axiom = Axiom {
             name: "list_positive_len_is_not_emp".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("n".to_string(), Type::Named("Int".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("n", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::And(
                     Box::new(Proposition::Predicate(
                         "len".to_string(),
                         vec![
-                            Expression::Variable("l".to_string()),
-                            Expression::Variable("n".to_string()),
+                            Expression::Variable("l".into()),
+                            Expression::Variable("n".into()),
                         ],
                     )),
                     Box::new(Proposition::Expr(Expression::BinaryOp(
-                        Box::new(Expression::Variable("n".to_string())),
+                        Box::new(Expression::Variable("n".into())),
                         BinaryOp::Gt,
                         Box::new(Expression::Literal(0)),
                     ))),
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
                     "emp".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )))),
             ),
             proof: Some("grind".to_string()),
@@ -621,33 +621,33 @@ mod tests {
         let axiom = Axiom {
             name: "list_tl_len_plus_1".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("l1".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("n".to_string(), Type::Named("Int".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("l1", Type::Named("ilist".to_string())),
+                Parameter::universal("n", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::And(
                     Box::new(Proposition::Predicate(
                         "tl".to_string(),
                         vec![
-                            Expression::Variable("l".to_string()),
-                            Expression::Variable("l1".to_string()),
+                            Expression::Variable("l".into()),
+                            Expression::Variable("l1".into()),
                         ],
                     )),
                     Box::new(Proposition::Predicate(
                         "len".to_string(),
                         vec![
-                            Expression::Variable("l1".to_string()),
-                            Expression::Variable("n".to_string()),
+                            Expression::Variable("l1".into()),
+                            Expression::Variable("n".into()),
                         ],
                     )),
                 )),
                 Box::new(Proposition::Predicate(
                     "len".to_string(),
                     vec![
-                        Expression::Variable("l".to_string()),
+                        Expression::Variable("l".into()),
                         Expression::BinaryOp(
-                            Box::new(Expression::Variable("n".to_string())),
+                            Box::new(Expression::Variable("n".into())),
                             BinaryOp::Add,
                             Box::new(Expression::Literal(1)),
                         ),
@@ -690,25 +690,25 @@ mod tests {
         let axiom = Axiom {
             name: "list_tl_plus_1_len".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("l1".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("n".to_string(), Type::Named("Int".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("l1", Type::Named("ilist".to_string())),
+                Parameter::universal("n", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::And(
                     Box::new(Proposition::Predicate(
                         "tl".to_string(),
                         vec![
-                            Expression::Variable("l".to_string()),
-                            Expression::Variable("l1".to_string()),
+                            Expression::Variable("l".into()),
+                            Expression::Variable("l1".into()),
                         ],
                     )),
                     Box::new(Proposition::Predicate(
                         "len".to_string(),
                         vec![
-                            Expression::Variable("l".to_string()),
+                            Expression::Variable("l".into()),
                             Expression::BinaryOp(
-                                Box::new(Expression::Variable("n".to_string())),
+                                Box::new(Expression::Variable("n".into())),
                                 BinaryOp::Add,
                                 Box::new(Expression::Literal(1)),
                             ),
@@ -718,8 +718,8 @@ mod tests {
                 Box::new(Proposition::Predicate(
                     "len".to_string(),
                     vec![
-                        Expression::Variable("l1".to_string()),
-                        Expression::Variable("n".to_string()),
+                        Expression::Variable("l1".into()),
+                        Expression::Variable("n".into()),
                     ],
                 )),
             ),
@@ -765,11 +765,11 @@ mod tests {
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
                     "emp".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Predicate(
                     "sorted".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )),
             ),
             proof: Some("grind".to_string()),
@@ -809,16 +809,16 @@ mod tests {
         let axiom = Axiom {
             name: "list_single_sorted_1".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("x".to_string(), Type::Named("Int".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("x", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Equality(
-                    Box::new(Proposition::Expr(Expression::Variable("l".to_string()))),
+                    Box::new(Proposition::Expr(Expression::Variable("l".into()))),
                     Box::new(Proposition::Expr(Expression::Constructor(
                         ConstructorName::Simple("Cons".to_string()),
                         vec![
-                            Expression::Variable("x".to_string()),
+                            Expression::Variable("x".into()),
                             Expression::Constructor(
                                 ConstructorName::Simple("Nil".to_string()),
                                 vec![],
@@ -828,7 +828,7 @@ mod tests {
                 )),
                 Box::new(Proposition::Predicate(
                     "sorted".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )),
             ),
             proof: Some("grind".to_string()),
@@ -867,26 +867,26 @@ mod tests {
         let axiom = Axiom {
             name: "list_tl_sorted".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("l1".to_string(), Type::Named("ilist".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("l1", Type::Named("ilist".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::And(
                     Box::new(Proposition::Predicate(
                         "tl".to_string(),
                         vec![
-                            Expression::Variable("l".to_string()),
-                            Expression::Variable("l1".to_string()),
+                            Expression::Variable("l".into()),
+                            Expression::Variable("l1".into()),
                         ],
                     )),
                     Box::new(Proposition::Predicate(
                         "sorted".to_string(),
-                        vec![Expression::Variable("l".to_string())],
+                        vec![Expression::Variable("l".into())],
                     )),
                 )),
                 Box::new(Proposition::Predicate(
                     "sorted".to_string(),
-                    vec![Expression::Variable("l1".to_string())],
+                    vec![Expression::Variable("l1".into())],
                 )),
             ),
             proof: Some("grind".to_string()),
@@ -925,51 +925,51 @@ mod tests {
         let axiom = Axiom {
             name: "list_hd_sorted".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("l1".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("x".to_string(), Type::Named("Int".to_string())),
-                Parameter::universal("y".to_string(), Type::Named("Int".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("l1", Type::Named("ilist".to_string())),
+                Parameter::universal("x", Type::Named("Int".to_string())),
+                Parameter::universal("y", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::And(
                     Box::new(Proposition::Predicate(
                         "tl".to_string(),
                         vec![
-                            Expression::Variable("l".to_string()),
-                            Expression::Variable("l1".to_string()),
+                            Expression::Variable("l".into()),
+                            Expression::Variable("l1".into()),
                         ],
                     )),
                     Box::new(Proposition::Predicate(
                         "sorted".to_string(),
-                        vec![Expression::Variable("l".to_string())],
+                        vec![Expression::Variable("l".into())],
                     )),
                 )),
                 Box::new(Proposition::Or(
                     Box::new(Proposition::Predicate(
                         "emp".to_string(),
-                        vec![Expression::Variable("l1".to_string())],
+                        vec![Expression::Variable("l1".into())],
                     )),
                     Box::new(Proposition::Implication(
                         Box::new(Proposition::And(
                             Box::new(Proposition::Predicate(
                                 "hd".to_string(),
                                 vec![
-                                    Expression::Variable("l1".to_string()),
-                                    Expression::Variable("y".to_string()),
+                                    Expression::Variable("l1".into()),
+                                    Expression::Variable("y".into()),
                                 ],
                             )),
                             Box::new(Proposition::Predicate(
                                 "hd".to_string(),
                                 vec![
-                                    Expression::Variable("l".to_string()),
-                                    Expression::Variable("x".to_string()),
+                                    Expression::Variable("l".into()),
+                                    Expression::Variable("x".into()),
                                 ],
                             )),
                         )),
                         Box::new(Proposition::Expr(Expression::BinaryOp(
-                            Box::new(Expression::Variable("x".to_string())),
+                            Box::new(Expression::Variable("x".into())),
                             BinaryOp::Lte,
-                            Box::new(Expression::Variable("y".to_string())),
+                            Box::new(Expression::Variable("y".into())),
                         ))),
                     )),
                 )),
@@ -1010,45 +1010,45 @@ mod tests {
         let axiom = Axiom {
             name: "list_sorted_hd".to_string(),
             params: vec![
-                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("l1".to_string(), Type::Named("ilist".to_string())),
-                Parameter::universal("x".to_string(), Type::Named("Int".to_string())),
-                Parameter::universal("y".to_string(), Type::Named("Int".to_string())),
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("l1", Type::Named("ilist".to_string())),
+                Parameter::universal("x", Type::Named("Int".to_string())),
+                Parameter::universal("y", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::And(
                     Box::new(Proposition::Predicate(
                         "tl".to_string(),
                         vec![
-                            Expression::Variable("l".to_string()),
-                            Expression::Variable("l1".to_string()),
+                            Expression::Variable("l".into()),
+                            Expression::Variable("l1".into()),
                         ],
                     )),
                     Box::new(Proposition::And(
                         Box::new(Proposition::Predicate(
                             "sorted".to_string(),
-                            vec![Expression::Variable("l1".to_string())],
+                            vec![Expression::Variable("l1".into())],
                         )),
                         Box::new(Proposition::And(
                             Box::new(Proposition::Predicate(
                                 "hd".to_string(),
                                 vec![
-                                    Expression::Variable("l".to_string()),
-                                    Expression::Variable("y".to_string()),
+                                    Expression::Variable("l".into()),
+                                    Expression::Variable("y".into()),
                                 ],
                             )),
                             Box::new(Proposition::And(
                                 Box::new(Proposition::Predicate(
                                     "hd".to_string(),
                                     vec![
-                                        Expression::Variable("l1".to_string()),
-                                        Expression::Variable("x".to_string()),
+                                        Expression::Variable("l1".into()),
+                                        Expression::Variable("x".into()),
                                     ],
                                 )),
                                 Box::new(Proposition::Expr(Expression::BinaryOp(
-                                    Box::new(Expression::Variable("y".to_string())),
+                                    Box::new(Expression::Variable("y".into())),
                                     BinaryOp::Lte,
-                                    Box::new(Expression::Variable("x".to_string())),
+                                    Box::new(Expression::Variable("x".into())),
                                 ))),
                             )),
                         )),
@@ -1056,7 +1056,7 @@ mod tests {
                 )),
                 Box::new(Proposition::Predicate(
                     "sorted".to_string(),
-                    vec![Expression::Variable("l".to_string())],
+                    vec![Expression::Variable("l".into())],
                 )),
             ),
             proof: Some("grind".to_string()),

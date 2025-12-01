@@ -1,7 +1,7 @@
 /// Lean backend for outputting AST to Lean 4 syntax
 ///
 use crate::{
-    ToLean,
+    ToLean, VarName,
     prog_ir::{AstNode, BinaryOp, Expression, LetBinding, UnaryOp},
 };
 
@@ -44,7 +44,7 @@ impl ToLean for LetBinding {
 impl ToLean for Expression {
     fn to_lean(&self) -> String {
         match self {
-            Expression::Variable(name) => name.clone(),
+            Expression::Variable(name) => name.to_string(),
             Expression::Constructor(name, args) => {
                 if args.is_empty() {
                     format!(".{}", name)
@@ -300,20 +300,20 @@ mod tests {
         };
 
         let len_function = LetBinding {
-            name: "len".to_string(),
+            name: VarName::new("len"),
             is_recursive: true,
             params: vec![
-                ("l".to_string(), Type::Named("ilist".to_string())),
-                ("n".to_string(), Type::Int),
+                (VarName::new("l"), Type::Named("ilist".to_string())),
+                (VarName::new("n"), Type::Int),
             ],
             return_type: Some(Type::Bool),
             body: Expression::Match(
-                Box::new(Expression::Variable("l".to_string())),
+                Box::new(Expression::Variable("l".into())),
                 vec![
                     (
                         Pattern::Constructor(ConstructorName::Simple("Nil".to_string()), vec![]),
                         Expression::BinaryOp(
-                            Box::new(Expression::Variable("n".to_string())),
+                            Box::new(Expression::Variable("n".into())),
                             BinaryOp::Eq,
                             Box::new(Expression::Literal(Literal::Int(0))),
                         ),
@@ -321,14 +321,14 @@ mod tests {
                     (
                         Pattern::Constructor(
                             ConstructorName::Simple("Cons".to_string()),
-                            vec![Pattern::Wildcard, Pattern::Variable("rest".to_string())],
+                            vec![Pattern::Wildcard, Pattern::Variable("rest".into())],
                         ),
                         Expression::Application(
-                            Box::new(Expression::Variable("len".to_string())),
+                            Box::new(Expression::Variable("len".into())),
                             vec![
-                                Expression::Variable("rest".to_string()),
+                                Expression::Variable("rest".into()),
                                 Expression::BinaryOp(
-                                    Box::new(Expression::Variable("n".to_string())),
+                                    Box::new(Expression::Variable("n".into())),
                                     BinaryOp::Sub,
                                     Box::new(Expression::Literal(Literal::Int(1))),
                                 ),
@@ -351,11 +351,11 @@ mod tests {
     #[test]
     fn test_function_with_one_attribute() {
         let func = LetBinding {
-            name: "foo".to_string(),
+            name: VarName::new("foo"),
             is_recursive: false,
-            params: vec![("x".to_string(), Type::Int)],
+            params: vec![(VarName::new("x"), Type::Int)],
             return_type: Some(Type::Int),
-            body: Expression::Variable("x".to_string()),
+            body: Expression::Variable("x".into()),
             attributes: vec!["simp".to_string()],
         };
 
@@ -367,11 +367,11 @@ mod tests {
     #[test]
     fn test_function_with_two_attributes() {
         let func = LetBinding {
-            name: "bar".to_string(),
+            name: VarName::new("bar"),
             is_recursive: false,
-            params: vec![("y".to_string(), Type::Bool)],
+            params: vec![(VarName::new("y"), Type::Bool)],
             return_type: Some(Type::Bool),
-            body: Expression::Variable("y".to_string()),
+            body: Expression::Variable("y".into()),
             attributes: vec!["simp".to_string(), "grind".to_string()],
         };
 

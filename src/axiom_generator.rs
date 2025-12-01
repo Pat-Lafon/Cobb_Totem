@@ -1,12 +1,13 @@
 use crate::prog_ir::{LetBinding, AstNode};
 use crate::spec_ir::Axiom;
+use crate::VarName;
 
 /// Takes a parsed program IR function and generates axioms in the spec IR
 pub struct AxiomGenerator;
 
 impl AxiomGenerator {
     /// Generate axioms from a function definition
-    pub fn from_let_binding(binding: &LetBinding) -> Result<Vec<Axiom>, String> {
+    pub fn from_let_binding(_binding: &LetBinding) -> Result<Vec<Axiom>, String> {
         unimplemented!()
     }
 
@@ -34,7 +35,7 @@ mod tests {
             .iter()
             .find_map(|node| {
                 if let AstNode::LetBinding(binding) = node {
-                    if binding.name == "len" {
+                    if binding.name == VarName::new("len") {
                         return Some(binding.clone());
                     }
                 }
@@ -42,7 +43,7 @@ mod tests {
             })
             .expect("Failed to find len function");
 
-        let axioms = AxiomGenerator::from_let_binding(&len_function)
+        let _axioms = AxiomGenerator::from_let_binding(&len_function)
             .expect("Failed to generate axioms");
 
         // Should generate exactly the expected axioms for len: len_nil and len_cons
