@@ -73,8 +73,8 @@ pub enum Expression {
     /// Variable reference
     Variable(VarName),
 
-    /// Integer literal
-    Literal(i32),
+    /// Literal values
+    Literal(Literal),
 
     /// Binary arithmetic/comparison operators: >=, >, ==, <, <=, +, -, etc.
     BinaryOp(Box<Expression>, BinaryOp, Box<Expression>),

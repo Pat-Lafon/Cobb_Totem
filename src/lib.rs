@@ -8,6 +8,13 @@ pub mod spec_ir;
 
 use std::fmt;
 
+/// Literal values used in expressions
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Literal {
+    Int(i32),
+    Bool(bool),
+}
+
 /// A variable name with type safety
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct VarName(String);
@@ -56,4 +63,22 @@ impl AsRef<str> for VarName {
 /// Trait for converting AST nodes to Lean syntax
 pub trait ToLean {
     fn to_lean(&self) -> String;
+}
+
+impl fmt::Display for Literal {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Literal::Int(n) => write!(f, "{}", n),
+            Literal::Bool(b) => write!(f, "{}", b),
+        }
+    }
+}
+
+impl ToLean for Literal {
+    fn to_lean(&self) -> String {
+        match self {
+            Literal::Int(n) => n.to_string(),
+            Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
+        }
+    }
 }

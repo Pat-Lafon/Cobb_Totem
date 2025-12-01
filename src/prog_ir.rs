@@ -362,30 +362,6 @@ impl ToLean for Variant {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Literal {
-    Int(i32),
-    Bool(bool),
-}
-
-impl fmt::Display for Literal {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Literal::Int(n) => write!(f, "{}", n),
-            Literal::Bool(b) => write!(f, "{}", b),
-        }
-    }
-}
-
-impl ToLean for Literal {
-    fn to_lean(&self) -> String {
-        match self {
-            Literal::Int(n) => n.to_string(),
-            Literal::Bool(b) => if *b { "true" } else { "false" }.to_string(),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BinaryOp {
     Add,
