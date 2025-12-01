@@ -207,9 +207,6 @@ impl ToLean for Expression {
     }
 }
 
-
-
-
 /// Helper functions to parse predicate definitions for the ilist datatype
 pub mod predicates {
     use super::*;
@@ -254,9 +251,8 @@ mod tests {
     #[test]
     fn test_axiom_with_prelude() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((emp l) → ¬(hd l x)))
         let axiom = Axiom {
@@ -307,9 +303,8 @@ mod tests {
     #[test]
     fn test_axiom_with_type_theorems() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom with BEq theorems
         let axiom = Axiom {
@@ -361,9 +356,8 @@ mod tests {
     #[test]
     fn test_axiom_list_emp_no_tl() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), ((emp l) → ¬(tl l l1)))
         let axiom = Axiom {
@@ -413,9 +407,8 @@ mod tests {
     #[test]
     fn test_axiom_list_hd_no_emp() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((hd l x) → ¬(emp l)))
         let axiom = Axiom {
@@ -464,9 +457,8 @@ mod tests {
     #[test]
     fn test_axiom_list_tl_no_emp() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), ((tl l l1) → ¬(emp l)))
         let axiom = Axiom {
@@ -515,9 +507,8 @@ mod tests {
     #[test]
     fn test_axiom_list_len_0_emp() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), ((emp l) → (len l 0))
         let axiom = Axiom {
@@ -566,9 +557,8 @@ mod tests {
     #[test]
     fn test_axiom_list_positive_len_is_not_emp() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (n : Int), (((len l n) ∧ (n > 0)) → ¬(emp l)))
         let axiom = Axiom {
@@ -624,9 +614,8 @@ mod tests {
     #[test]
     fn test_axiom_list_tl_len_plus_1() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (∀ (n : Int), (((tl l l1) ∧ (len l1 n)) → (len l (n + 1)))))
         let axiom = Axiom {
@@ -694,9 +683,8 @@ mod tests {
     #[test]
     fn test_axiom_list_tl_plus_1_len() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (∀ (n : Int), (((tl l l1) ∧ (len l (n + 1))) → (len l1 n))))
         let axiom = Axiom {
@@ -764,9 +752,8 @@ mod tests {
     #[test]
     fn test_axiom_list_emp_sorted() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), ((emp l) → (sorted l))
         let axiom = Axiom {
@@ -814,23 +801,16 @@ mod tests {
     #[test]
     fn test_axiom_list_single_sorted() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom that matches the Lean theorem list_single_sorted_1:
         // ∀ (l : ilist), (∀ (x : Int), ((l == .Cons x .Nil) → (sorted l)))
         let axiom = Axiom {
             name: "list_single_sorted_1".to_string(),
             params: vec![
-                Parameter::universal(
-                    "l".to_string(),
-                    Type::Named("ilist".to_string()),
-                ),
-                Parameter::universal(
-                    "x".to_string(),
-                    Type::Named("Int".to_string()),
-                ),
+                Parameter::universal("l".to_string(), Type::Named("ilist".to_string())),
+                Parameter::universal("x".to_string(), Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Equality(
@@ -839,7 +819,10 @@ mod tests {
                         ConstructorName::Simple("Cons".to_string()),
                         vec![
                             Expression::Variable("x".to_string()),
-                            Expression::Constructor(ConstructorName::Simple("Nil".to_string()), vec![]),
+                            Expression::Constructor(
+                                ConstructorName::Simple("Nil".to_string()),
+                                vec![],
+                            ),
                         ],
                     ))),
                 )),
@@ -877,9 +860,8 @@ mod tests {
     #[test]
     fn test_axiom_list_tl_sorted() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (((tl l l1) ∧ (sorted l)) → (sorted l1)))
         let axiom = Axiom {
@@ -936,9 +918,8 @@ mod tests {
     #[test]
     fn test_axiom_list_hd_sorted() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (∀ (x : Int), (∀ (y : Int), (((tl l l1) ∧ (sorted l)) → ((emp l1) ∨ (((hd l1 y) ∧ (hd l x)) → (x <= y)))))))
         let axiom = Axiom {
@@ -1022,9 +1003,8 @@ mod tests {
     #[test]
     fn test_axiom_list_sorted_hd() {
         // Load the prelude predicates
-        let prelude_nodes = predicates::parse_all().unwrap_or_else(|e| {
-            panic!("Failed to parse prelude: {}", e)
-        });
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (∀ (x : Int), (∀ (y : Int), (((tl l l1) ∧ ((sorted l1) ∧ ((hd l y) ∧ ((hd l1 x) ∧ (y <= x))))) → (sorted l)))))
         let axiom = Axiom {
