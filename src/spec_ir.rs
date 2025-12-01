@@ -524,10 +524,7 @@ mod tests {
                 )),
                 Box::new(Proposition::Predicate(
                     "len".to_string(),
-                    vec![
-                        Expression::Variable("l".into()),
-                        Expression::Literal(0),
-                    ],
+                    vec![Expression::Variable("l".into()), Expression::Literal(0)],
                 )),
             ),
             proof: Some("grind".to_string()),

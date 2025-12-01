@@ -135,20 +135,11 @@ impl ToLean for AstNode {
 }
 
 /// Builder for constructing Lean code with automatic theorem attachment to types
+#[derive(Default)]
 pub struct LeanContextBuilder {
     nodes: Vec<AstNode>,
     axioms: Vec<crate::spec_ir::Axiom>,
     types_with_theorems: std::collections::HashMap<String, String>, // type_name -> theorems
-}
-
-impl Default for LeanContextBuilder {
-    fn default() -> Self {
-        LeanContextBuilder {
-            nodes: Vec::new(),
-            axioms: Vec::new(),
-            types_with_theorems: std::collections::HashMap::new(),
-        }
-    }
 }
 
 impl LeanContextBuilder {
@@ -168,7 +159,8 @@ impl LeanContextBuilder {
 
     /// Attach BEq theorems to a specific type by name
     pub fn with_type_theorems(mut self, type_name: &str, theorems: String) -> Self {
-        self.types_with_theorems.insert(type_name.to_string(), theorems);
+        self.types_with_theorems
+            .insert(type_name.to_string(), theorems);
         self
     }
 
@@ -176,18 +168,16 @@ impl LeanContextBuilder {
     pub fn build(self) -> String {
         self.nodes
             .iter()
-            .map(|node| {
-                match node {
-                    AstNode::TypeDeclaration(type_decl) => {
-                        match self.types_with_theorems.get(&type_decl.name) {
-                            Some(theorems) => {
-                                format!("{}\n\n{}", type_decl.to_lean(), theorems)
-                            }
-                            None => type_decl.to_lean(),
+            .map(|node| match node {
+                AstNode::TypeDeclaration(type_decl) => {
+                    match self.types_with_theorems.get(&type_decl.name) {
+                        Some(theorems) => {
+                            format!("{}\n\n{}", type_decl.to_lean(), theorems)
                         }
+                        None => type_decl.to_lean(),
                     }
-                    other => other.to_lean(),
                 }
+                other => other.to_lean(),
             })
             .chain(self.axioms.iter().map(|axiom| axiom.to_lean()))
             .collect::<Vec<_>>()
@@ -198,9 +188,9 @@ impl LeanContextBuilder {
 #[cfg(test)]
 mod tests {
     use crate::{
+        VarName,
         lean_validation::validate_lean_code,
         prog_ir::{ConstructorName, Literal, Pattern, Type, TypeDecl, Variant},
-        VarName,
     };
 
     use super::*;
@@ -381,8 +371,7 @@ mod tests {
         let full_code = format!("{}\n\n{}", inductive_def, lawful_support);
 
         // Verify the code validates
-        validate_lean_code(&full_code).unwrap_or_else(|e| {
-            panic!("Generated LawfulBEq code failed validation: {}", e)
-        });
+        validate_lean_code(&full_code)
+            .unwrap_or_else(|e| panic!("Generated LawfulBEq code failed validation: {}", e));
     }
 }

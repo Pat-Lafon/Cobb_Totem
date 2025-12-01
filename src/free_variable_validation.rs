@@ -1,11 +1,11 @@
 use itertools::Itertools as _;
 
 use crate::{
-    spec_ir::{Axiom, Expression, Proposition},
     VarName,
+    spec_ir::{Axiom, Expression, Proposition},
 };
 
-pub fn collect_all_variables(prop: &Proposition) -> std::collections::HashSet<VarName> {
+fn collect_all_variables(prop: &Proposition) -> std::collections::HashSet<VarName> {
     let mut vars = std::collections::HashSet::new();
     collect_variables_in_prop(prop, &mut vars);
     vars
@@ -45,7 +45,7 @@ fn collect_variables_in_expr(expr: &Expression, vars: &mut std::collections::Has
     }
 }
 
-pub trait ValidateNoFreeVariables {
+pub(crate) trait ValidateNoFreeVariables {
     fn validate_no_free_variables(&self) -> Result<(), String>;
 }
 
@@ -74,10 +74,7 @@ mod tests {
 
     #[test]
     fn test_free_variable_detection() {
-        let params = vec![Parameter::universal(
-            "l",
-            Type::Named("ilist".to_string()),
-        )];
+        let params = vec![Parameter::universal("l", Type::Named("ilist".to_string()))];
 
         let body = Proposition::Implication(
             Box::new(Proposition::Predicate("emp".to_string(), vec![])),

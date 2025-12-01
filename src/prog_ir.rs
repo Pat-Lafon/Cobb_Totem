@@ -16,7 +16,7 @@ impl ConstructorName {
     /// - Start with an uppercase letter
     /// - Contain only alphanumeric characters or underscores
     fn is_valid_name(name: &str) -> bool {
-        name.chars().next().map_or(false, |c| c.is_uppercase())
+        name.chars().next().is_some_and(|c| c.is_uppercase())
             && name.chars().all(|c| c.is_alphanumeric() || c == '_')
     }
 }
@@ -279,10 +279,7 @@ impl TypeDecl {
                     let vars = Self::generate_param_names(v.fields.len(), "x");
                     format!(" {}", vars.join(" "))
                 };
-                cases.push(format!(
-                    "    | {} => grind",
-                    format!("{}{}", v.name, params)
-                ));
+                cases.push(format!("    | {}{} => grind", v.name, params));
             }
             cases.join("\n")
         };
@@ -681,11 +678,11 @@ impl fmt::Display for AstNode {
 
 #[cfg(test)]
 mod tests {
+    use crate::VarName;
     use crate::ocamlparser::OcamlParser;
     use crate::prog_ir::{
         AstNode, BinaryOp, ConstructorName, Expression, Literal, Pattern, Type, TypeDecl, Variant,
     };
-    use crate::VarName;
 
     #[test]
     fn test_parse_sorted_predicate() {
@@ -716,10 +713,7 @@ mod tests {
                     (
                         Pattern::Constructor(
                             ConstructorName::Simple("Cons".to_string()),
-                            vec![
-                                Pattern::Variable("h".into()),
-                                Pattern::Variable("t".into()),
-                            ],
+                            vec![Pattern::Variable("h".into()), Pattern::Variable("t".into())],
                         ),
                         Expression::Match(
                             Box::new(Expression::Variable("t".into())),

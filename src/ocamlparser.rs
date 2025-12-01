@@ -1,9 +1,9 @@
 use crate::{
-    prog_ir::{
-        AstNode, BinaryOp, ConstructorName, Expression, LetBinding, Literal, Pattern, Type, TypeDecl,
-        Variant,
-    },
     VarName,
+    prog_ir::{
+        AstNode, BinaryOp, ConstructorName, Expression, LetBinding, Literal, Pattern, Type,
+        TypeDecl, Variant,
+    },
 };
 use tree_sitter::Node;
 
@@ -532,7 +532,7 @@ impl OcamlParser {
                     && text
                         .chars()
                         .next()
-                        .map_or(false, |c| c.is_alphabetic() || c == '_');
+                        .is_some_and(|c| c.is_alphabetic() || c == '_');
                 assert!(valid_var, "Expected valid variable name, got '{}'", text);
                 Expression::Variable(VarName::new(text))
             }
