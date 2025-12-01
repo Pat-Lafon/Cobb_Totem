@@ -1,3 +1,4 @@
+pub mod axiom_generator;
 pub mod free_variable_validation;
 pub mod lean_backend;
 pub mod lean_validation;
