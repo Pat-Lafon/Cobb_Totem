@@ -73,9 +73,16 @@ impl AxiomGenerator {
                     .iter()
                     .map(|expr| {
                         let results = Self::from_expression(expr);
-                        assert_eq!(results.len(), 1, "Constructor argument should have exactly one result");
+                        assert_eq!(
+                            results.len(),
+                            1,
+                            "Constructor argument should have exactly one result"
+                        );
                         let (prop, vars) = results.into_iter().next().unwrap();
-                        assert!(vars.is_empty(), "Constructor argument should not introduce variables");
+                        assert!(
+                            vars.is_empty(),
+                            "Constructor argument should not introduce variables"
+                        );
                         match prop {
                             Proposition::Expr(e) => e,
                             _ => panic!("Constructor argument must be an expression"),
@@ -87,7 +94,7 @@ impl AxiomGenerator {
                         constructor_name.clone(),
                         converted_expressions,
                     )),
-                    vec![], // Constructor doesn't add additional variables
+                    vec![],
                 )]
             }
             crate::prog_ir::Expression::Literal(literal) => vec![(
@@ -96,9 +103,16 @@ impl AxiomGenerator {
             )],
             crate::prog_ir::Expression::UnaryOp(unary_op, expression) => {
                 let results = Self::from_expression(expression);
-                assert_eq!(results.len(), 1, "UnaryOp operand should have exactly one result");
+                assert_eq!(
+                    results.len(),
+                    1,
+                    "UnaryOp operand should have exactly one result"
+                );
                 let (prop, vars) = results.into_iter().next().unwrap();
-                assert!(vars.is_empty(), "UnaryOp operand should not introduce variables");
+                assert!(
+                    vars.is_empty(),
+                    "UnaryOp operand should not introduce variables"
+                );
                 match prop {
                     Proposition::Expr(e) => vec![(
                         Proposition::Expr(Expression::UnaryOp(*unary_op, Box::new(e))),
@@ -107,8 +121,87 @@ impl AxiomGenerator {
                     _ => panic!("UnaryOp operand must be an expression"),
                 }
             }
-            crate::prog_ir::Expression::BinaryOp(expression, binary_op, expression1) => todo!(),
-            crate::prog_ir::Expression::Application(expression, expressions) => todo!(),
+            crate::prog_ir::Expression::BinaryOp(expression, binary_op, expression1) => {
+                let left_results = Self::from_expression(expression);
+                assert_eq!(
+                    left_results.len(),
+                    1,
+                    "BinaryOp left operand should have exactly one result"
+                );
+                let (left_prop, left_vars) = left_results.into_iter().next().unwrap();
+                assert!(
+                    left_vars.is_empty(),
+                    "BinaryOp left operand should not introduce variables"
+                );
+
+                let right_results = Self::from_expression(expression1);
+                assert_eq!(
+                    right_results.len(),
+                    1,
+                    "BinaryOp right operand should have exactly one result"
+                );
+                let (right_prop, right_vars) = right_results.into_iter().next().unwrap();
+                assert!(
+                    right_vars.is_empty(),
+                    "BinaryOp right operand should not introduce variables"
+                );
+
+                match (left_prop, right_prop) {
+                    (Proposition::Expr(left_e), Proposition::Expr(right_e)) => vec![(
+                        Proposition::Expr(Expression::BinaryOp(
+                            Box::new(left_e),
+                            *binary_op,
+                            Box::new(right_e),
+                        )),
+                        vec![],
+                    )],
+                    _ => panic!("BinaryOp operands must be expressions"),
+                }
+            }
+            crate::prog_ir::Expression::Application(func_expr, arg_exprs) => {
+                let func_results = Self::from_expression(func_expr);
+                assert_eq!(
+                    func_results.len(),
+                    1,
+                    "Application function should have exactly one result"
+                );
+                let (func_prop, func_vars) = func_results.into_iter().next().unwrap();
+                assert!(
+                    func_vars.is_empty(),
+                    "Application function should not introduce variables"
+                );
+
+                let converted_args: Vec<_> = arg_exprs
+                    .iter()
+                    .map(|expr| {
+                        let results = Self::from_expression(expr);
+                        assert_eq!(
+                            results.len(),
+                            1,
+                            "Application argument should have exactly one result"
+                        );
+                        let (prop, vars) = results.into_iter().next().unwrap();
+                        assert!(
+                            vars.is_empty(),
+                            "Application argument should not introduce variables"
+                        );
+                        match prop {
+                            Proposition::Expr(e) => e,
+                            _ => panic!("Application argument must be an expression"),
+                        }
+                    })
+                    .collect();
+
+                match func_prop {
+                    Proposition::Expr(Expression::Variable(func_name)) => {
+                        vec![(
+                            Proposition::Predicate(func_name.to_string(), converted_args),
+                            vec![],
+                        )]
+                    }
+                    _ => panic!("Application function must be a variable"),
+                }
+            }
             crate::prog_ir::Expression::Match(expression, items) => todo!(),
             crate::prog_ir::Expression::Tuple(expressions) => todo!(),
         }
