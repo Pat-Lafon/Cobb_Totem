@@ -3,20 +3,22 @@ use std::str::FromStr;
 
 use crate::{ToLean, VarName};
 
-/// Validates that a name is a valid constructor identifier.
-///
-/// A valid constructor name must:
-/// - Start with an uppercase letter
-/// - Contain only alphanumeric characters or underscores
-fn is_valid_constructor_name(name: &str) -> bool {
-    name.chars().next().map_or(false, |c| c.is_uppercase())
-        && name.chars().all(|c| c.is_alphanumeric() || c == '_')
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstructorName {
     Simple(String),
     Qualified { module: String, name: String },
+}
+
+impl ConstructorName {
+    /// Validates that a name is a valid constructor identifier.
+    ///
+    /// A valid constructor name must:
+    /// - Start with an uppercase letter
+    /// - Contain only alphanumeric characters or underscores
+    fn is_valid_name(name: &str) -> bool {
+        name.chars().next().map_or(false, |c| c.is_uppercase())
+            && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+    }
 }
 
 impl FromStr for ConstructorName {
@@ -28,7 +30,7 @@ impl FromStr for ConstructorName {
         match parts.as_slice() {
             [name] => {
                 // Simple constructor
-                if is_valid_constructor_name(name) {
+                if Self::is_valid_name(name) {
                     Ok(ConstructorName::Simple(name.to_string()))
                 } else {
                     Err(format!("Invalid simple constructor name: '{}'", text))
@@ -36,7 +38,7 @@ impl FromStr for ConstructorName {
             }
             [module, name] => {
                 // Qualified constructor
-                if is_valid_constructor_name(module) && is_valid_constructor_name(name) {
+                if Self::is_valid_name(module) && Self::is_valid_name(name) {
                     Ok(ConstructorName::Qualified {
                         module: module.to_string(),
                         name: name.to_string(),
@@ -167,6 +169,11 @@ impl ToLean for TypeDecl {
 }
 
 impl TypeDecl {
+    /// Generate parameter names with a given prefix and count
+    fn generate_param_names(count: usize, prefix: &str) -> Vec<String> {
+        (0..count).map(|i| format!("{}{}", prefix, i)).collect()
+    }
+
     /// Generate LawfulBEq helper theorems for beq behavior on constructor combinations
     fn generate_beq_theorems(&self) -> String {
         let mut theorems = Vec::new();
@@ -190,18 +197,8 @@ impl TypeDecl {
                         theorems.push(theorem);
                     } else {
                         // Both are n-ary constructors - need parameters
-                        let param_names1: Vec<String> = variant1
-                            .fields
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _)| format!("x{}", i))
-                            .collect();
-                        let param_names2: Vec<String> = variant2
-                            .fields
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _)| format!("y{}", i))
-                            .collect();
+                        let param_names1 = Self::generate_param_names(variant1.fields.len(), "x");
+                        let param_names2 = Self::generate_param_names(variant2.fields.len(), "y");
 
                         let params1 = param_names1.join(" ");
                         let params2 = param_names2.join(" ");
@@ -243,23 +240,13 @@ impl TypeDecl {
                     let params1 = if variant1.fields.is_empty() {
                         String::new()
                     } else {
-                        let vars: Vec<String> = variant1
-                            .fields
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _)| format!("x{}", i))
-                            .collect();
+                        let vars = Self::generate_param_names(variant1.fields.len(), "x");
                         format!(" {}", vars.join(" "))
                     };
                     let params2 = if variant2.fields.is_empty() {
                         String::new()
                     } else {
-                        let vars: Vec<String> = variant2
-                            .fields
-                            .iter()
-                            .enumerate()
-                            .map(|(i, _)| format!("y{}", i))
-                            .collect();
+                        let vars = Self::generate_param_names(variant2.fields.len(), "y");
                         format!(" {}", vars.join(" "))
                     };
                     let theorem = format!(
@@ -289,12 +276,7 @@ impl TypeDecl {
                 let params = if v.fields.is_empty() {
                     String::new()
                 } else {
-                    let vars: Vec<String> = v
-                        .fields
-                        .iter()
-                        .enumerate()
-                        .map(|(i, _)| format!("x{}", i))
-                        .collect();
+                    let vars = Self::generate_param_names(v.fields.len(), "x");
                     format!(" {}", vars.join(" "))
                 };
                 cases.push(format!(
@@ -308,18 +290,12 @@ impl TypeDecl {
         let rfl_cases = self
             .variants
             .iter()
-            .enumerate()
-            .map(|(_i, v)| {
+            .map(|v| {
                 if v.fields.is_empty() {
                     format!("    | {} => grind", v.name)
                 } else {
                     // Generate parameter names and include the inductive hypothesis
-                    let vars: Vec<String> = v
-                        .fields
-                        .iter()
-                        .enumerate()
-                        .map(|(j, _)| format!("x{}", j))
-                        .collect();
+                    let vars = Self::generate_param_names(v.fields.len(), "x");
                     let params_str = vars.join(" ");
                     // The inductive hypothesis is automatically added by Lean as 'ih'
                     format!("    | {} {} ih => grind", v.name, params_str)
