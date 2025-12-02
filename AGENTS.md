@@ -8,7 +8,7 @@
 - Validate node types with explicit checks: `if node.kind() != "expected_kind"` rather than silent skipping
 - Provide descriptive panic messages that indicate what was expected vs. what was found
 - **Always include the underlying error message when panicking on an error**, using patterns like `panic!("Failed to parse: {}", e)` to preserve diagnostic information
-- **Never create dummy nodes** as fallback values (e.g., `Expression::Variable("")`). Panic instead.
+- **Never create dummy nodes or placeholder values** as fallback values (e.g., `Expression::Variable("")`, `vec![]`, etc.). Use `unimplemented!()` with a descriptive message instead.
 - **Never silently discard return values with `let _ = result;`** - always explicitly handle the result with assertions or explicit error handling
 
 Example pattern:

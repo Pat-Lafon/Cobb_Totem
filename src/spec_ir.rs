@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::{
-    ToLean, VarName,
+    Literal, ToLean, VarName,
     ocamlparser::OcamlParser,
     prog_ir::{self, BinaryOp, ConstructorName, Type, UnaryOp},
 };
@@ -224,7 +224,7 @@ let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true 
     }
 }
 
-/// Helper to create an ilist type definition
+/// Helper to create an ilist type definition with @[grind] annotation
 pub fn create_ilist_type() -> prog_ir::TypeDecl {
     prog_ir::TypeDecl {
         name: "ilist".to_string(),
@@ -238,7 +238,7 @@ pub fn create_ilist_type() -> prog_ir::TypeDecl {
                 fields: vec![Type::Int, Type::Named("ilist".to_string())],
             },
         ],
-        attributes: vec![],
+        attributes: vec!["grind".to_string()],
     }
 }
 
@@ -524,7 +524,10 @@ mod tests {
                 )),
                 Box::new(Proposition::Predicate(
                     "len".to_string(),
-                    vec![Expression::Variable("l".into()), Expression::Literal(0)],
+                    vec![
+                        Expression::Variable("l".into()),
+                        Expression::Literal(Literal::Int(0)),
+                    ],
                 )),
             ),
             proof: Some("grind".to_string()),
@@ -576,7 +579,7 @@ mod tests {
                     Box::new(Proposition::Expr(Expression::BinaryOp(
                         Box::new(Expression::Variable("n".into())),
                         BinaryOp::Gt,
-                        Box::new(Expression::Literal(0)),
+                        Box::new(Expression::Literal(Literal::Int(0))),
                     ))),
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
@@ -646,7 +649,7 @@ mod tests {
                         Expression::BinaryOp(
                             Box::new(Expression::Variable("n".into())),
                             BinaryOp::Add,
-                            Box::new(Expression::Literal(1)),
+                            Box::new(Expression::Literal(Literal::Int(1))),
                         ),
                     ],
                 )),
@@ -707,7 +710,7 @@ mod tests {
                             Expression::BinaryOp(
                                 Box::new(Expression::Variable("n".into())),
                                 BinaryOp::Add,
-                                Box::new(Expression::Literal(1)),
+                                Box::new(Expression::Literal(Literal::Int(1))),
                             ),
                         ],
                     )),

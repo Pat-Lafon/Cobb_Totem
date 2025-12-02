@@ -1,8 +1,8 @@
 use crate::{
-    VarName,
+    Literal, VarName,
     prog_ir::{
-        AstNode, BinaryOp, ConstructorName, Expression, LetBinding, Literal, Pattern, Type,
-        TypeDecl, Variant,
+        AstNode, BinaryOp, ConstructorName, Expression, LetBinding, Pattern, Type, TypeDecl,
+        Variant,
     },
 };
 use tree_sitter::Node;

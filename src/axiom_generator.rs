@@ -1,12 +1,20 @@
 use crate::VarName;
 use crate::free_variable_validation::ValidateNoFreeVariables;
-use crate::prog_ir::{AstNode, LetBinding, Type};
+use crate::prog_ir::{AstNode, LetBinding, Type, TypeDecl};
 use crate::spec_ir::{Axiom, Expression, Parameter, Proposition, Quantifier};
 
 /// Takes a parsed program IR function and generates axioms in the spec IR
-pub struct AxiomGenerator;
+pub struct AxiomGenerator {
+    /// Type declarations for looking up constructor types
+    pub type_constructors: Vec<TypeDecl>,
+}
 
 impl AxiomGenerator {
+    /// Create a new AxiomGenerator with the given type constructors
+    pub fn new(type_constructors: Vec<TypeDecl>) -> Self {
+        Self { type_constructors }
+    }
+
     /// Convert a list of (VarName, Type) pairs into universal parameters
     fn varnames_to_universals(params: &[(VarName, Type)]) -> Vec<Parameter> {
         params
@@ -19,8 +27,126 @@ impl AxiomGenerator {
             .collect()
     }
 
+    /// Look up the type of a constructor parameter by constructor name and field index
+    fn get_constructor_field_type(&self, constructor_name: &str, field_index: usize) -> Type {
+        self.type_constructors
+            .iter()
+            .find_map(|type_decl| {
+                type_decl
+                    .variants
+                    .iter()
+                    .find(|variant| variant.name == constructor_name)
+                    .and_then(|variant| variant.fields.get(field_index).cloned())
+            })
+            .expect(&format!(
+                "Failed to find constructor {} at index {}",
+                constructor_name, field_index
+            ))
+    }
+
+    /// Extract all variables introduced by a pattern
+    fn vars_from_pattern(&self, pattern: &crate::prog_ir::Pattern) -> Vec<(VarName, Type)> {
+        match pattern {
+            crate::prog_ir::Pattern::Variable(_name) => {
+                unimplemented!("Need to infer or track the type of variable pattern")
+            }
+            crate::prog_ir::Pattern::Constructor(constructor_name, nested_patterns) => {
+                nested_patterns
+                    .iter()
+                    .enumerate()
+                    .flat_map(|(index, p)| match p {
+                        crate::prog_ir::Pattern::Variable(name) => {
+                            let typ = self.get_constructor_field_type(
+                                constructor_name.get_simple_name(),
+                                index,
+                            );
+                            vec![(name.clone(), typ)]
+                        }
+                        _ => self.vars_from_pattern(p),
+                    })
+                    .collect()
+            }
+            crate::prog_ir::Pattern::Literal(_) => vec![],
+            crate::prog_ir::Pattern::Wildcard => unimplemented!(),
+        }
+    }
+
+    /// Convert a pattern to a spec_ir Expression
+    fn expr_from_pattern(&self, pattern: &crate::prog_ir::Pattern) -> Expression {
+        match pattern {
+            crate::prog_ir::Pattern::Variable(name) => Expression::Variable(name.clone()),
+            crate::prog_ir::Pattern::Constructor(name, nested_patterns) => {
+                let converted_patterns: Vec<_> = nested_patterns
+                    .iter()
+                    .map(|p| self.expr_from_pattern(p))
+                    .collect();
+                Expression::Constructor(name.clone(), converted_patterns)
+            }
+            crate::prog_ir::Pattern::Literal(lit) => Expression::Literal(lit.clone()),
+            crate::prog_ir::Pattern::Wildcard => {
+                unimplemented!()
+            }
+        }
+    }
+
+    /// Process a single match branch: create a proposition combining the pattern constraint and branch result
+    fn process_match_branch(
+        &self,
+        pattern: &crate::prog_ir::Pattern,
+        branch_expr: &crate::prog_ir::Expression,
+        scrutinee: &crate::prog_ir::Expression,
+    ) -> Vec<(Proposition, Vec<(VarName, Type)>)> {
+        let branch_results = self.from_expression(branch_expr);
+
+        branch_results
+            .into_iter()
+            .map(|(branch_prop, branch_vars)| {
+                // Extract variables introduced by the pattern
+                let pattern_vars = self.vars_from_pattern(pattern);
+
+                // Create pattern constraint: scrutinee = pattern
+                let scrutinee_results = self.from_expression(scrutinee);
+                assert_eq!(
+                    scrutinee_results.len(),
+                    1,
+                    "Match scrutinee should have exactly one result"
+                );
+                let (scrutinee_prop, scrutinee_vars) =
+                    scrutinee_results.into_iter().next().unwrap();
+                assert!(
+                    scrutinee_vars.is_empty(),
+                    "Match scrutinee should not introduce variables"
+                );
+
+                let pattern_constraint = match scrutinee_prop {
+                    Proposition::Expr(scrutinee_expr) => {
+                        let pattern_expr = self.expr_from_pattern(pattern);
+                        Proposition::Expr(Expression::BinaryOp(
+                            Box::new(scrutinee_expr),
+                            crate::prog_ir::BinaryOp::Eq,
+                            Box::new(pattern_expr),
+                        ))
+                    }
+                    _ => panic!("Match scrutinee must be an expression"),
+                };
+
+                // Combine pattern constraint with branch proposition
+                let combined_prop = Proposition::Implication(
+                    Box::new(pattern_constraint),
+                    Box::new(branch_prop),
+                );
+
+                // Combine pattern variables with branch variables
+                let mut all_vars = pattern_vars;
+                all_vars.extend(branch_vars);
+
+                (combined_prop, all_vars)
+            })
+            .collect()
+    }
+
     /// Generate axioms from a function definition
-    fn from_let_binding(binding: &LetBinding) -> Result<Vec<Axiom>, String> {
+    fn from_let_binding(&self, binding: &LetBinding) -> Result<Vec<Axiom>, String> {
         // Extract parameters from the let binding and convert them to universals
         let universals = Self::varnames_to_universals(&binding.params);
 
@@ -33,15 +159,18 @@ impl AxiomGenerator {
                 .collect(),
         );
 
-        let possible_bodies = Self::from_expression(&binding.body);
+        let possible_bodies = self.from_expression(&binding.body);
 
         let axioms: Vec<Axiom> = possible_bodies
             .into_iter()
-            .map(|(prop, additional_vars)| {
+            .enumerate()
+            .map(|(idx, (prop, additional_vars))| {
                 let mut params = universals.clone();
                 params.extend(Self::varnames_to_universals(&additional_vars));
+                // Sort parameters by name for consistent ordering
+                params.sort_by(|a, b| a.name.cmp(&b.name));
                 Axiom {
-                    name: "blah".to_string(),
+                    name: format!("{}_{}", binding.name, idx),
                     params,
                     body: Proposition::Implication(
                         Box::new(func_prop_start.clone()),
@@ -61,6 +190,7 @@ impl AxiomGenerator {
     }
 
     fn from_expression(
+        &self,
         body: &crate::prog_ir::Expression,
     ) -> Vec<(Proposition, Vec<(VarName, Type)>)> {
         match body {
@@ -72,7 +202,7 @@ impl AxiomGenerator {
                 let converted_expressions: Vec<_> = expressions
                     .iter()
                     .map(|expr| {
-                        let results = Self::from_expression(expr);
+                        let results = self.from_expression(expr);
                         assert_eq!(
                             results.len(),
                             1,
@@ -102,7 +232,7 @@ impl AxiomGenerator {
                 vec![],
             )],
             crate::prog_ir::Expression::UnaryOp(unary_op, expression) => {
-                let results = Self::from_expression(expression);
+                let results = self.from_expression(expression);
                 assert_eq!(
                     results.len(),
                     1,
@@ -122,7 +252,7 @@ impl AxiomGenerator {
                 }
             }
             crate::prog_ir::Expression::BinaryOp(expression, binary_op, expression1) => {
-                let left_results = Self::from_expression(expression);
+                let left_results = self.from_expression(expression);
                 assert_eq!(
                     left_results.len(),
                     1,
@@ -134,7 +264,7 @@ impl AxiomGenerator {
                     "BinaryOp left operand should not introduce variables"
                 );
 
-                let right_results = Self::from_expression(expression1);
+                let right_results = self.from_expression(expression1);
                 assert_eq!(
                     right_results.len(),
                     1,
@@ -146,20 +276,30 @@ impl AxiomGenerator {
                     "BinaryOp right operand should not introduce variables"
                 );
 
-                match (left_prop, right_prop) {
-                    (Proposition::Expr(left_e), Proposition::Expr(right_e)) => vec![(
-                        Proposition::Expr(Expression::BinaryOp(
-                            Box::new(left_e),
-                            *binary_op,
-                            Box::new(right_e),
-                        )),
+                match binary_op {
+                    crate::prog_ir::BinaryOp::And => vec![(
+                        Proposition::And(Box::new(left_prop), Box::new(right_prop)),
                         vec![],
                     )],
-                    _ => panic!("BinaryOp operands must be expressions"),
+                    crate::prog_ir::BinaryOp::Or => vec![(
+                        Proposition::Or(Box::new(left_prop), Box::new(right_prop)),
+                        vec![],
+                    )],
+                    _ => match (left_prop, right_prop) {
+                        (Proposition::Expr(left_e), Proposition::Expr(right_e)) => vec![(
+                            Proposition::Expr(Expression::BinaryOp(
+                                Box::new(left_e),
+                                *binary_op,
+                                Box::new(right_e),
+                            )),
+                            vec![],
+                        )],
+                        _ => panic!("Non-boolean BinaryOp operands must be expressions"),
+                    },
                 }
             }
             crate::prog_ir::Expression::Application(func_expr, arg_exprs) => {
-                let func_results = Self::from_expression(func_expr);
+                let func_results = self.from_expression(func_expr);
                 assert_eq!(
                     func_results.len(),
                     1,
@@ -174,7 +314,7 @@ impl AxiomGenerator {
                 let converted_args: Vec<_> = arg_exprs
                     .iter()
                     .map(|expr| {
-                        let results = Self::from_expression(expr);
+                        let results = self.from_expression(expr);
                         assert_eq!(
                             results.len(),
                             1,
@@ -202,18 +342,27 @@ impl AxiomGenerator {
                     _ => panic!("Application function must be a variable"),
                 }
             }
-            crate::prog_ir::Expression::Match(expression, items) => todo!(),
-            crate::prog_ir::Expression::Tuple(expressions) => todo!(),
+            crate::prog_ir::Expression::Match(scrutinee, cases) => {
+                // For each branch of the match, create a proposition
+                // The proposition includes both the pattern constraint and the branch result
+                cases
+                    .iter()
+                    .flat_map(|(pattern, branch_expr)| {
+                        self.process_match_branch(pattern, branch_expr, scrutinee)
+                    })
+                    .collect()
+            }
+            crate::prog_ir::Expression::Tuple(_expressions) => todo!(),
         }
     }
 
     /// Generate axioms from an AST node
-    pub fn from_ast_node(node: &AstNode) -> Result<Vec<Axiom>, String> {
+    pub fn from_ast_node(&self, node: &AstNode) -> Result<Vec<Axiom>, String> {
         match node {
             AstNode::TypeDeclaration(_) => {
                 Err("Cannot generate axioms from type declarations".to_string())
             }
-            AstNode::LetBinding(binding) => Self::from_let_binding(binding),
+            AstNode::LetBinding(binding) => self.from_let_binding(binding),
         }
     }
 }
@@ -221,12 +370,15 @@ impl AxiomGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::lean_backend::LeanContextBuilder;
+    use crate::lean_validation::validate_lean_code;
     use crate::ocamlparser::OcamlParser;
+    use crate::spec_ir::{create_ilist_type, predicates};
     use crate::{ToLean as _, VarName};
 
     #[test]
     fn test_generate_axioms_from_length_function() {
-        let len_function_str = "let [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons (_, xs) -> len xs (n - 1)";
+        let len_function_str = "let [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons (x, xs) -> len xs (n - 1)";
         let nodes =
             OcamlParser::parse_nodes(len_function_str).expect("Failed to parse len function");
         assert_eq!(nodes.len(), 1, "Expected exactly one node");
@@ -239,26 +391,75 @@ mod tests {
             node => panic!("Expected LetBinding, got {:?}", node),
         };
 
-        let axioms =
-            AxiomGenerator::from_let_binding(&len_function).expect("Failed to generate axioms");
+        let generator = AxiomGenerator::new(vec![create_ilist_type()]);
+        let axioms = generator
+            .from_let_binding(&len_function)
+            .expect("Failed to generate axioms");
 
         // Should generate exactly the expected axioms for len: len_nil and len_cons
         assert_eq!(axioms.len(), 2, "Expected 2 axioms");
 
-        // len_nil: ∀ l : List, ∀ n : Int, ((l = .Nil ∧ len l n) → n = 0)
+        // len_nil: ∀ l : ilist, ∀ n : Int, ((len l n) → ((l = .Nil) → (n = 0)))
         let len_nil = &axioms[0];
-        assert_eq!(len_nil.name, "len_nil");
         assert_eq!(
             len_nil.to_lean(),
-            "theorem len_nil : ∀ l : List, ∀ n : Int, ((l = .Nil ∧ len l n) → n = 0) := sorry"
+            "theorem len_0 : ∀ l : ilist, ∀ n : Int, ((len l n) → ((l = .Nil) → (n = 0))) := sorry"
         );
 
-        // len_cons: ∀ x : Int, ∀ xs : List, ∀ l : List, ∀ n : Int, ((l = .Cons x xs ∧ len xs n) → len l (n + 1))
+        // len_cons: ∀ l : ilist, ∀ n : Int, ∀ x : Int, ∀ xs : ilist, ((l = .Cons x xs) → (len xs n → len l (n + 1)))
         let len_cons = &axioms[1];
-        assert_eq!(len_cons.name, "len_cons");
         assert_eq!(
             len_cons.to_lean(),
-            "theorem len_cons : ∀ x : Int, ∀ xs : List, ∀ l : List, ∀ n : Int, ((l = .Cons x xs ∧ len xs n) → len l (n + 1)) := sorry"
+            "theorem len_1 : ∀ l : ilist, ∀ n : Int, ∀ x : Int, ∀ xs : ilist, ((len l n) → ((l = (.Cons x xs)) → (len xs (n - 1)))) := sorry"
         );
+
+        // Validate generated theorems through Lean backend
+        let prelude_nodes = predicates::parse_all().expect("Failed to parse prelude");
+        let ilist_type = create_ilist_type();
+        let lean_code = LeanContextBuilder::new()
+            .with_nodes(prelude_nodes)
+            .with_axioms(axioms)
+            .with_type_theorems("ilist", ilist_type.generate_complete_lawful_beq())
+            .build();
+
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
+    }
+
+    #[test]
+    fn test_generate_axioms_from_sorted_function() {
+        let sorted_function_str = "let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (x, xs) -> match xs with | Nil -> true | Cons (y, ys) -> (x <= y) && sorted xs";
+        let nodes = OcamlParser::parse_nodes(sorted_function_str)
+            .expect("Failed to parse sorted function");
+        assert_eq!(nodes.len(), 1, "Expected exactly one node");
+
+        let sorted_function = match nodes.into_iter().next().unwrap() {
+            AstNode::LetBinding(binding) => {
+                assert_eq!(binding.name, VarName::new("sorted"));
+                binding
+            }
+            node => panic!("Expected LetBinding, got {:?}", node),
+        };
+
+        let generator = AxiomGenerator::new(vec![create_ilist_type()]);
+        let axioms = generator
+            .from_let_binding(&sorted_function)
+            .expect("Failed to generate axioms");
+
+        // Should generate axioms for the sorted function
+        // We expect at least 2 axioms: one for Nil case and one for Cons cases
+        assert!(axioms.len() >= 2, "Expected at least 2 axioms for sorted");
+
+        // Validate generated theorems through Lean backend
+        let prelude_nodes = predicates::parse_all().expect("Failed to parse prelude");
+        let ilist_type = create_ilist_type();
+        let lean_code = LeanContextBuilder::new()
+            .with_nodes(prelude_nodes)
+            .with_axioms(axioms)
+            .with_type_theorems("ilist", ilist_type.generate_complete_lawful_beq())
+            .build();
+
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
     }
 }

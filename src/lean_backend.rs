@@ -188,9 +188,9 @@ impl LeanContextBuilder {
 #[cfg(test)]
 mod tests {
     use crate::{
-        VarName,
+        Literal, VarName,
         lean_validation::validate_lean_code,
-        prog_ir::{ConstructorName, Literal, Pattern, Type, TypeDecl, Variant},
+        prog_ir::{ConstructorName, Pattern, Type, TypeDecl, Variant},
     };
 
     use super::*;
@@ -259,7 +259,7 @@ mod tests {
         let lean_code = ilist_type.to_lean();
         assert_eq!(
             lean_code,
-            "inductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr"
+            "@[grind]\ninductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr"
         );
         assert!(
             validate_lean_code(&lean_code).is_ok(),
@@ -315,7 +315,7 @@ mod tests {
         let lean_code = format!("{}\n\n{}", ilist_type.to_lean(), len_function.to_lean());
         assert_eq!(
             lean_code,
-            "inductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr\n\ndef len (l : ilist) (n : Int) : Bool := match l with\n  | .Nil => (n == 0)\n  | .Cons _ rest => len rest (n - 1)"
+            "@[grind]\ninductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr\n\ndef len (l : ilist) (n : Int) : Bool := match l with\n  | .Nil => (n == 0)\n  | .Cons _ rest => len rest (n - 1)"
         );
         validate_lean_code(&lean_code).unwrap();
     }

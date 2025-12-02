@@ -2,6 +2,7 @@ BEq
 Disjunction
 IR
 emp
+fallthrough
 hd
 iff
 ilist

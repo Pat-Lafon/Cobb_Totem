@@ -1,7 +1,7 @@
 use std::fmt;
 use std::str::FromStr;
 
-use crate::{ToLean, VarName};
+use crate::{Literal, ToLean, VarName};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstructorName {
@@ -18,6 +18,13 @@ impl ConstructorName {
     fn is_valid_name(name: &str) -> bool {
         name.chars().next().is_some_and(|c| c.is_uppercase())
             && name.chars().all(|c| c.is_alphanumeric() || c == '_')
+    }
+
+    pub fn get_simple_name(&self) -> &str {
+        match self {
+            ConstructorName::Simple(s) => s,
+            ConstructorName::Qualified { name, .. } => name,
+        }
     }
 }
 
