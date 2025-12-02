@@ -462,4 +462,76 @@ mod tests {
         validate_lean_code(&lean_code)
             .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
     }
+
+    #[test]
+    fn test_generate_axioms_from_mem_function() {
+        let mem_function_str = "let [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t";
+        let nodes =
+            OcamlParser::parse_nodes(mem_function_str).expect("Failed to parse mem function");
+        assert_eq!(nodes.len(), 1, "Expected exactly one node");
+
+        let mem_function = match nodes.into_iter().next().unwrap() {
+            AstNode::LetBinding(binding) => {
+                assert_eq!(binding.name, VarName::new("mem"));
+                binding
+            }
+            node => panic!("Expected LetBinding, got {:?}", node),
+        };
+
+        let generator = AxiomGenerator::new(vec![create_ilist_type()]);
+        let axioms = generator
+            .from_let_binding(&mem_function)
+            .expect("Failed to generate axioms");
+
+        // Should generate axioms for mem: mem_nil and mem_cons
+        assert_eq!(axioms.len(), 2, "Expected 2 axioms for mem");
+
+        // Validate generated theorems through Lean backend
+        let prelude_nodes = predicates::parse_all().expect("Failed to parse prelude");
+        let ilist_type = create_ilist_type();
+        let lean_code = LeanContextBuilder::new()
+            .with_nodes(prelude_nodes)
+            .with_axioms(axioms)
+            .with_type_theorems("ilist", ilist_type.generate_complete_lawful_beq())
+            .build();
+
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
+    }
+
+    #[test]
+    fn test_generate_axioms_from_all_eq_function() {
+        let all_eq_function_str = "let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons (h, t) -> (h = x) && all_eq t x";
+        let nodes =
+            OcamlParser::parse_nodes(all_eq_function_str).expect("Failed to parse all_eq function");
+        assert_eq!(nodes.len(), 1, "Expected exactly one node");
+
+        let all_eq_function = match nodes.into_iter().next().unwrap() {
+            AstNode::LetBinding(binding) => {
+                assert_eq!(binding.name, VarName::new("all_eq"));
+                binding
+            }
+            node => panic!("Expected LetBinding, got {:?}", node),
+        };
+
+        let generator = AxiomGenerator::new(vec![create_ilist_type()]);
+        let axioms = generator
+            .from_let_binding(&all_eq_function)
+            .expect("Failed to generate axioms");
+
+        // Should generate axioms for all_eq: all_eq_nil and all_eq_cons
+        assert_eq!(axioms.len(), 2, "Expected 2 axioms for all_eq");
+
+        // Validate generated theorems through Lean backend
+        let prelude_nodes = predicates::parse_all().expect("Failed to parse prelude");
+        let ilist_type = create_ilist_type();
+        let lean_code = LeanContextBuilder::new()
+            .with_nodes(prelude_nodes)
+            .with_axioms(axioms)
+            .with_type_theorems("ilist", ilist_type.generate_complete_lawful_beq())
+            .build();
+
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
+    }
 }

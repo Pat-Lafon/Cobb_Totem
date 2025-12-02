@@ -216,7 +216,9 @@ let [@simp] [@grind] emp (l : ilist) : bool = match l with | Nil -> true | Cons 
 let [@simp] [@grind] hd (l : ilist) (x : int) : bool = match l with | Nil -> false | Cons (h, _) -> h = x
 let [@simp] [@grind] tl (l : ilist) (xs : ilist) : bool = match l with | Nil -> false | Cons (_, t) -> t = xs
 let [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons (_, xs) -> len xs (n - 1)
-let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (h, t) -> match t with | Nil -> true | Cons (h2, t2) -> (h <= h2) && sorted (Cons (h2, t2))";
+let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (h, t) -> match t with | Nil -> true | Cons (h2, t2) -> (h <= h2) && sorted (Cons (h2, t2))
+let [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t
+let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons (h, t) -> (h = x) && all_eq t x";
 
     /// Parse all predicates and type definitions
     pub fn parse_all() -> Result<Vec<prog_ir::AstNode>, Box<dyn std::error::Error>> {
@@ -1073,6 +1075,119 @@ mod tests {
         // Verify the code structure before validation
         assert!(!lean_code.is_empty());
         assert!(lean_code.contains("list_sorted_hd"));
+        assert!(lean_code.contains("theorem"));
+
+        // Validate the generated Lean code using the Lean backend
+        let result = validate_lean_code(&lean_code);
+        assert!(
+            result.is_ok(),
+            "Expected validation to succeed, but got: {:?}\nLean code:\n{}",
+            result,
+            lean_code
+        );
+    }
+
+    #[test]
+    fn test_axiom_list_mem() {
+        // Load the prelude predicates
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+
+        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((mem x l) → ¬(emp l)))
+        let axiom = Axiom {
+            name: "list_mem_not_emp".to_string(),
+            params: vec![
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("x", Type::Named("Int".to_string())),
+            ],
+            body: Proposition::Implication(
+                Box::new(Proposition::Predicate(
+                    "mem".to_string(),
+                    vec![
+                        Expression::Variable("x".into()),
+                        Expression::Variable("l".into()),
+                    ],
+                )),
+                Box::new(Proposition::Not(Box::new(Proposition::Predicate(
+                    "emp".to_string(),
+                    vec![Expression::Variable("l".into())],
+                )))),
+            ),
+            proof: Some("grind".to_string()),
+        };
+
+        // Build the Lean context with prelude definitions and axiom
+        let ilist_type = create_ilist_type();
+        let lean_code = crate::lean_backend::LeanContextBuilder::new()
+            .with_nodes(prelude_nodes)
+            .with_axioms(vec![axiom])
+            .with_type_theorems("ilist", ilist_type.generate_complete_lawful_beq())
+            .build();
+
+        // Verify the code structure before validation
+        assert!(!lean_code.is_empty());
+        assert!(lean_code.contains("list_mem_not_emp"));
+        assert!(lean_code.contains("theorem"));
+
+        // Validate the generated Lean code using the Lean backend
+        let result = validate_lean_code(&lean_code);
+        assert!(
+            result.is_ok(),
+            "Expected validation to succeed, but got: {:?}\nLean code:\n{}",
+            result,
+            lean_code
+        );
+    }
+
+    #[test]
+    fn test_axiom_list_all_eq() {
+        // Load the prelude predicates
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+
+        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((all_eq l x) → (emp l ∨ (hd l x))))
+        let axiom = Axiom {
+            name: "list_all_eq_hd".to_string(),
+            params: vec![
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("x", Type::Named("Int".to_string())),
+            ],
+            body: Proposition::Implication(
+                Box::new(Proposition::Predicate(
+                    "all_eq".to_string(),
+                    vec![
+                        Expression::Variable("l".into()),
+                        Expression::Variable("x".into()),
+                    ],
+                )),
+                Box::new(Proposition::Or(
+                    Box::new(Proposition::Predicate(
+                        "emp".to_string(),
+                        vec![Expression::Variable("l".into())],
+                    )),
+                    Box::new(Proposition::Predicate(
+                        "hd".to_string(),
+                        vec![
+                            Expression::Variable("l".into()),
+                            Expression::Variable("x".into()),
+                        ],
+                    )),
+                )),
+            ),
+            proof: Some("grind".to_string()),
+        };
+
+        // Build the Lean context with prelude definitions and axiom
+        let ilist_type = create_ilist_type();
+        let lean_code = crate::lean_backend::LeanContextBuilder::new()
+            .with_nodes(prelude_nodes)
+            .with_axioms(vec![axiom])
+            .with_type_theorems("ilist", ilist_type.generate_complete_lawful_beq())
+            .build();
+
+        // Verify the code structure before validation
+        assert!(!lean_code.is_empty());
+        assert!(lean_code.contains("list_all_eq_hd"));
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
