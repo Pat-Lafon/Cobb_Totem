@@ -7,12 +7,15 @@ use cobb_totem::prog_ir::AstNode;
 use cobb_totem::spec_ir::create_ilist_type;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /*     let program_str = "
+    /*         let program_str = "
     type [@grind] ilist = Nil | Cons of int * ilist\n
 
     let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (x, xs) -> match xs with | Nil -> true | Cons (y, ys) -> (x <= y) && sorted xs"; */
 
-    let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons (x, xs) -> len xs (n - 1)";
+    let program_str = "
+    type [@grind] ilist = Nil | Cons of int * ilist\n
+
+    let [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons (x, xs) -> len xs (n - 1)";
     let parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
     assert_eq!(
         parsed_nodes.len(),
@@ -48,6 +51,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_nodes(parsed_nodes)
         .with_axioms(axioms)
         .build();
+
+    println!("\nLean Code:\n{lean_code}");
 
     validate_lean_code(&lean_code)
         .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
