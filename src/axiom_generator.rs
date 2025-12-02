@@ -146,7 +146,7 @@ impl AxiomGenerator {
     }
 
     /// Generate axioms from a function definition
-    fn from_let_binding(&self, binding: &LetBinding) -> Result<Vec<Axiom>, String> {
+    pub fn from_let_binding(&self, binding: &LetBinding) -> Result<Vec<Axiom>, String> {
         // Extract parameters from the let binding and convert them to universals
         let universals = Self::varnames_to_universals(&binding.params);
 
@@ -396,9 +396,14 @@ mod tests {
             .expect("Expected to find len function binding");
 
         let generator = AxiomGenerator::new(vec![create_ilist_type()]);
-        let axioms = generator
+        let mut axioms = generator
             .from_let_binding(&len_function)
             .expect("Failed to generate axioms");
+
+        // Set proof to grind for all axioms
+        for axiom in &mut axioms {
+            axiom.proof = Some("grind".to_string());
+        }
 
         // Should generate exactly the expected axioms for len: len_nil and len_cons
         assert_eq!(axioms.len(), 2, "Expected 2 axioms");
@@ -407,14 +412,14 @@ mod tests {
         let len_nil = &axioms[0];
         assert_eq!(
             len_nil.to_lean(),
-            "theorem len_0 : ∀ l : ilist, ∀ n : Int, ((len l n) → ((l = .Nil) → (n = 0))) := sorry"
+            "theorem len_0 : ∀ l : ilist, ∀ n : Int, ((len l n) → ((l = .Nil) → (n = 0))) := by grind"
         );
 
         // len_cons: ∀ l : ilist, ∀ n : Int, ∀ x : Int, ∀ xs : ilist, ((l = .Cons x xs) → (len xs n → len l (n + 1)))
         let len_cons = &axioms[1];
         assert_eq!(
             len_cons.to_lean(),
-            "theorem len_1 : ∀ l : ilist, ∀ n : Int, ∀ x : Int, ∀ xs : ilist, ((len l n) → ((l = (.Cons x xs)) → (len xs (n - 1)))) := sorry"
+            "theorem len_1 : ∀ l : ilist, ∀ n : Int, ∀ x : Int, ∀ xs : ilist, ((len l n) → ((l = (.Cons x xs)) → (len xs (n - 1)))) := by grind"
         );
 
         // Validate generated theorems through Lean backend
@@ -445,9 +450,14 @@ mod tests {
             .expect("Expected to find sorted function binding");
 
         let generator = AxiomGenerator::new(vec![create_ilist_type()]);
-        let axioms = generator
+        let mut axioms = generator
             .from_let_binding(&sorted_function)
             .expect("Failed to generate axioms");
+
+        // Set proof to grind for all axioms
+        for axiom in &mut axioms {
+            axiom.proof = Some("grind".to_string());
+        }
 
         // Should generate axioms for the sorted function
         // We expect at least 2 axioms: one for Nil case and one for Cons cases
@@ -481,9 +491,14 @@ mod tests {
             .expect("Expected to find mem function binding");
 
         let generator = AxiomGenerator::new(vec![create_ilist_type()]);
-        let axioms = generator
+        let mut axioms = generator
             .from_let_binding(&mem_function)
             .expect("Failed to generate axioms");
+
+        // Set proof to grind for all axioms
+        for axiom in &mut axioms {
+            axiom.proof = Some("grind".to_string());
+        }
 
         // Should generate axioms for mem: mem_nil and mem_cons
         assert_eq!(axioms.len(), 2, "Expected 2 axioms for mem");
@@ -516,9 +531,14 @@ mod tests {
             .expect("Expected to find all_eq function binding");
 
         let generator = AxiomGenerator::new(vec![create_ilist_type()]);
-        let axioms = generator
+        let mut axioms = generator
             .from_let_binding(&all_eq_function)
             .expect("Failed to generate axioms");
+
+        // Set proof to grind for all axioms
+        for axiom in &mut axioms {
+            axiom.proof = Some("grind".to_string());
+        }
 
         // Should generate axioms for all_eq: all_eq_nil and all_eq_cons
         assert_eq!(axioms.len(), 2, "Expected 2 axioms for all_eq");

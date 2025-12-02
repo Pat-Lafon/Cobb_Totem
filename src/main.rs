@@ -1,27 +1,58 @@
-use std::fs;
-
+use cobb_totem::ToLean as _;
+use cobb_totem::axiom_generator::AxiomGenerator;
+use cobb_totem::lean_backend::LeanContextBuilder;
+use cobb_totem::lean_validation::validate_lean_code;
 use cobb_totem::ocamlparser::OcamlParser;
+use cobb_totem::prog_ir::AstNode;
+use cobb_totem::spec_ir::create_ilist_type;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let source = fs::read_to_string("input_files/list_len.ml")?;
+    /*     let program_str = "
+    type [@grind] ilist = Nil | Cons of int * ilist\n
 
-    let mut parser = tree_sitter::Parser::new();
-    let lang = tree_sitter_ocaml::LANGUAGE_OCAML.into();
-    parser.set_language(&lang)?;
+    let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (x, xs) -> match xs with | Nil -> true | Cons (y, ys) -> (x <= y) && sorted xs"; */
 
-    let tree = parser.parse(&source, None).ok_or("Failed to parse file")?;
+    let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons (x, xs) -> len xs (n - 1)";
+    let parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
+    assert_eq!(
+        parsed_nodes.len(),
+        2,
+        "Expected exactly two nodes (type + function)"
+    );
 
-    let ocaml_parser = OcamlParser::new(source);
-    let ast = ocaml_parser.parse(&tree)?;
+    let sorted_function = parsed_nodes
+        .iter()
+        .find_map(|node| match node {
+            AstNode::LetBinding(binding) => Some(binding.clone()),
+            _ => None,
+        })
+        .expect("Expected to find sorted function binding");
 
-    println!("Parsed OCaml AST:");
-    for node in &ast {
-        println!("{:#?}", node);
+    let generator = AxiomGenerator::new(vec![create_ilist_type()]);
+    let mut axioms = generator
+        .from_let_binding(&sorted_function)
+        .expect("Failed to generate axioms");
+
+    // Set proof to grind for all axioms
+    for axiom in &mut axioms {
+        axiom.proof = Some("grind".to_string());
     }
 
-    for node in ast {
-        println!("{}", node);
+    println!("Generated axioms:");
+    for axiom in &axioms {
+        println!("{}", axiom.to_lean());
     }
+
+    // Validate generated theorems through Lean backend
+    let lean_code = LeanContextBuilder::new()
+        .with_nodes(parsed_nodes)
+        .with_axioms(axioms)
+        .build();
+
+    validate_lean_code(&lean_code)
+        .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
+
+    println!("\nLean validation passed!");
 
     Ok(())
 }
