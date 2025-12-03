@@ -125,6 +125,17 @@ impl ToLean for Parameter {
     }
 }
 
+impl fmt::Display for Axiom {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "let[@axiom] {}", self.name)?;
+        for param in &self.params {
+            write!(f, " {}", param)?;
+        }
+        write!(f, " = {}", self.body)?;
+        Ok(())
+    }
+}
+
 impl ToLean for Axiom {
     fn to_lean(&self) -> String {
         let mut body_str = self.body.to_lean();
@@ -139,6 +150,44 @@ impl ToLean for Axiom {
             Some(p) => format!("by {}", p),
         };
         format!("theorem {} : {} := {}", self.name, body_str, proof)
+    }
+}
+
+impl fmt::Display for Proposition {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Proposition::Expr(expr) => write!(f, "{}", expr),
+            Proposition::Predicate(name, args) => {
+                if args.is_empty() {
+                    write!(f, "{}", name)
+                } else {
+                    let args_str = args
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    write!(f, "({} {})", name, args_str)
+                }
+            }
+            Proposition::Implication(p, q) => {
+                write!(f, "({})#==>({})", p, q)
+            }
+            Proposition::Equality(p, q) => {
+                write!(f, "({})#==({})", p, q)
+            }
+            Proposition::And(p, q) => {
+                write!(f, "({} && {})", p, q)
+            }
+            Proposition::Or(p, q) => {
+                write!(f, "({} || {})", p, q)
+            }
+            Proposition::Not(p) => {
+                write!(f, "(not ({}))", p)
+            }
+            Proposition::Iff(p, q) => {
+                write!(f, "(iff {} {})", p, q)
+            }
+        }
     }
 }
 
@@ -175,6 +224,33 @@ impl ToLean for Proposition {
             }
             Proposition::Iff(p, q) => {
                 format!("({} ↔ {})", p.to_lean(), q.to_lean())
+            }
+        }
+    }
+}
+
+impl fmt::Display for Expression {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Expression::Variable(name) => write!(f, "{}", name),
+            Expression::Literal(n) => write!(f, "{}", n),
+            Expression::BinaryOp(left, op, right) => {
+                write!(f, "({} {} {})", left, op, right)
+            }
+            Expression::UnaryOp(op, expr) => {
+                write!(f, "{}({})", op, expr)
+            }
+            Expression::Constructor(name, args) => {
+                if args.is_empty() {
+                    write!(f, ".{}", name)
+                } else {
+                    let args_str = args
+                        .iter()
+                        .map(|arg| arg.to_string())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    write!(f, "(.{} {})", name, args_str)
+                }
             }
         }
     }
@@ -1197,6 +1273,98 @@ mod tests {
             "Expected validation to succeed, but got: {:?}\nLean code:\n{}",
             result,
             lean_code
+        );
+    }
+
+    #[test]
+    fn test_axiom_display_format() {
+        // Create a simple axiom to test Display formatting
+        let axiom = Axiom {
+            name: "list_emp_no_hd".to_string(),
+            params: vec![
+                Parameter::universal("l", Type::Named("ilist".to_string())),
+                Parameter::universal("x", Type::Named("Int".to_string())),
+            ],
+            body: Proposition::Implication(
+                Box::new(Proposition::Predicate(
+                    "emp".to_string(),
+                    vec![Expression::Variable("l".into())],
+                )),
+                Box::new(Proposition::Not(Box::new(Proposition::Predicate(
+                    "hd".to_string(),
+                    vec![
+                        Expression::Variable("l".into()),
+                        Expression::Variable("x".into()),
+                    ],
+                )))),
+            ),
+            proof: Some("grind".to_string()),
+        };
+
+        let display_output = axiom.to_string();
+        assert_eq!(
+            display_output,
+            "let[@axiom] list_emp_no_hd (l : ilist) (x : Int) = ((emp l))#==>((not ((hd l x))))"
+        );
+    }
+
+    #[test]
+    fn test_axiom_display_with_existential() {
+        // Test formatting with existential parameters and complex boolean logic
+        let axiom = Axiom {
+            name: "tree_leaf_depth_0_disjoint".to_string(),
+            params: vec![
+                Parameter::universal("l", Type::Named("tree".to_string())),
+                Parameter::existential("n", Type::Named("int".to_string())),
+            ],
+            body: Proposition::Or(
+                Box::new(Proposition::And(
+                    Box::new(Proposition::And(
+                        Box::new(Proposition::Predicate(
+                            "depth".to_string(),
+                            vec![
+                                Expression::Variable("l".into()),
+                                Expression::Variable("n".into()),
+                            ],
+                        )),
+                        Box::new(Proposition::Equality(
+                            Box::new(Proposition::Expr(Expression::Variable("n".into()))),
+                            Box::new(Proposition::Expr(Expression::Literal(Literal::Int(0)))),
+                        )),
+                    )),
+                    Box::new(Proposition::Predicate(
+                        "leaf".to_string(),
+                        vec![Expression::Variable("l".into())],
+                    )),
+                )),
+                Box::new(Proposition::And(
+                    Box::new(Proposition::And(
+                        Box::new(Proposition::Predicate(
+                            "depth".to_string(),
+                            vec![
+                                Expression::Variable("l".into()),
+                                Expression::Variable("n".into()),
+                            ],
+                        )),
+                        Box::new(Proposition::Expr(Expression::BinaryOp(
+                            Box::new(Expression::Variable("n".into())),
+                            BinaryOp::Gt,
+                            Box::new(Expression::Literal(Literal::Int(0))),
+                        ))),
+                    )),
+                    Box::new(Proposition::Not(Box::new(Proposition::Predicate(
+                        "leaf".to_string(),
+                        vec![Expression::Variable("l".into())],
+                    )))),
+                )),
+            ),
+            proof: Some("grind".to_string()),
+        };
+
+        let display_output = axiom.to_string();
+        assert_eq!(
+            display_output,
+            "let[@axiom] tree_leaf_depth_0_disjoint (l : tree) ((n [@exists]) : int) = ((((depth l n) && (n)#==(0)) && (leaf l)) || (((depth l n) && (n > 0)) && (not ((leaf l)))))"
         );
     }
 }

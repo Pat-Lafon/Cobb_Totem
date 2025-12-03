@@ -145,6 +145,60 @@ impl AxiomGenerator {
             .collect()
     }
 
+    /// Build axioms for a given direction (forward or reverse)
+    fn build_axioms_for_direction(
+        &self,
+        binding: &LetBinding,
+        possible_bodies: &[(Proposition, Vec<(VarName, Type)>)],
+        universals: &[Parameter],
+        func_prop_start: &Proposition,
+        reverse: bool,
+    ) -> Vec<Axiom> {
+        possible_bodies
+            .iter()
+            .enumerate()
+            .map(|(idx, (prop, additional_vars))| {
+                let mut params = universals.to_vec();
+                params.extend(Self::varnames_to_universals(additional_vars));
+                // Sort parameters by name for consistent ordering
+                params.sort_by(|a, b| a.name.cmp(&b.name));
+
+                let body_prop = if reverse {
+                    // For reverse direction, append func_prop_start as a new final consequent
+                    Self::append_to_implication_chain(prop, func_prop_start)
+                } else {
+                    Proposition::Implication(Box::new(func_prop_start.clone()), Box::new(prop.clone()))
+                };
+
+                Axiom {
+                    name: format!(
+                        "{}_{}{}",
+                        binding.name,
+                        idx,
+                        if reverse { "_rev" } else { "" }
+                    ),
+                    params,
+                    body: body_prop,
+                    proof: None,
+                }
+            })
+            .collect()
+    }
+
+    /// Append a new consequent to the end of an implication chain.
+    /// For (A → B → C), appends func_prop to create (A → B → C → func_prop).
+    fn append_to_implication_chain(prop: &Proposition, func_prop: &Proposition) -> Proposition {
+        match prop {
+            Proposition::Implication(antecedent, consequent) => {
+                let inner = Self::append_to_implication_chain(consequent, func_prop);
+                Proposition::Implication(antecedent.clone(), Box::new(inner))
+            }
+            _ => {
+                Proposition::Implication(Box::new(prop.clone()), Box::new(func_prop.clone()))
+            }
+        }
+    }
+
     /// Generate axioms from a function definition
     pub fn from_let_binding(&self, binding: &LetBinding) -> Result<Vec<Axiom>, String> {
         // Extract parameters from the let binding and convert them to universals
@@ -161,25 +215,18 @@ impl AxiomGenerator {
 
         let possible_bodies = self.from_expression(&binding.body);
 
-        let axioms: Vec<Axiom> = possible_bodies
-            .into_iter()
-            .enumerate()
-            .map(|(idx, (prop, additional_vars))| {
-                let mut params = universals.clone();
-                params.extend(Self::varnames_to_universals(&additional_vars));
-                // Sort parameters by name for consistent ordering
-                params.sort_by(|a, b| a.name.cmp(&b.name));
-                Axiom {
-                    name: format!("{}_{}", binding.name, idx),
-                    params,
-                    body: Proposition::Implication(
-                        Box::new(func_prop_start.clone()),
-                        Box::new(prop),
-                    ),
-                    proof: None,
-                }
-            })
-            .collect();
+        // Generate forward axioms
+        let mut axioms =
+            self.build_axioms_for_direction(binding, &possible_bodies, &universals, &func_prop_start, false);
+
+        // Generate reverse axioms
+        axioms.extend(self.build_axioms_for_direction(
+            binding,
+            &possible_bodies,
+            &universals,
+            &func_prop_start,
+            true,
+        ));
 
         // Validate that all variables in each axiom body are declared as parameters
         for axiom in &axioms {
@@ -405,22 +452,29 @@ mod tests {
             axiom.proof = Some("grind".to_string());
         }
 
-        // Should generate exactly the expected axioms for len: len_nil and len_cons
-        assert_eq!(axioms.len(), 2, "Expected 2 axioms");
+        // Should generate exactly the expected axioms for len: len_nil, len_cons, and their reverses
+        assert_eq!(axioms.len(), 4, "Expected 4 axioms (forward and reverse)");
 
-        // len_nil: ∀ l : ilist, ∀ n : Int, ((len l n) → ((l = .Nil) → (n = 0)))
+        // len_nil (forward): ∀ l : ilist, ∀ n : Int, ((len l n) → ((l = .Nil) → (n = 0)))
         let len_nil = &axioms[0];
         assert_eq!(
             len_nil.to_lean(),
             "theorem len_0 : ∀ l : ilist, ∀ n : Int, ((len l n) → ((l = .Nil) → (n = 0))) := by grind"
         );
 
-        // len_cons: ∀ l : ilist, ∀ n : Int, ∀ x : Int, ∀ xs : ilist, ((l = .Cons x xs) → (len xs n → len l (n + 1)))
+        // len_cons (forward)
         let len_cons = &axioms[1];
+        let forward_axiom = len_cons.to_lean();
         assert_eq!(
-            len_cons.to_lean(),
+            forward_axiom,
             "theorem len_1 : ∀ l : ilist, ∀ n : Int, ∀ x : Int, ∀ xs : ilist, ((len l n) → ((l = (.Cons x xs)) → (len xs (n - 1)))) := by grind"
         );
+
+        // Verify that reverse axioms exist at indices 2 and 3
+        let len_nil_rev = &axioms[2];
+        assert_eq!(len_nil_rev.name, "len_0_rev");
+        let len_cons_rev = &axioms[3];
+        assert_eq!(len_cons_rev.name, "len_1_rev");
 
         // Validate generated theorems through Lean backend
         let lean_code = LeanContextBuilder::new()
@@ -460,8 +514,7 @@ mod tests {
         }
 
         // Should generate axioms for the sorted function
-        // We expect at least 2 axioms: one for Nil case and one for Cons cases
-        assert!(axioms.len() >= 2, "Expected at least 2 axioms for sorted");
+        assert!(axioms.len() == 6, "Expected at least 4 axioms for sorted (forward and reverse)");
 
         // Validate generated theorems through Lean backend
         let lean_code = LeanContextBuilder::new()
@@ -475,7 +528,9 @@ mod tests {
 
     #[test]
     fn test_generate_axioms_from_mem_function() {
-        let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t";
+        let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\n
+
+        let [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t";
         let parsed_nodes =
             OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
         assert_eq!(parsed_nodes.len(), 2, "Expected exactly two nodes (type + function)");
@@ -500,8 +555,8 @@ mod tests {
             axiom.proof = Some("grind".to_string());
         }
 
-        // Should generate axioms for mem: mem_nil and mem_cons
-        assert_eq!(axioms.len(), 2, "Expected 2 axioms for mem");
+        // Should generate axioms for mem: mem_nil, mem_cons, and their reverses
+        assert_eq!(axioms.len(), 4, "Expected 4 axioms for mem (forward and reverse)");
 
         // Validate generated theorems through Lean backend
         let lean_code = LeanContextBuilder::new()
@@ -515,7 +570,10 @@ mod tests {
 
     #[test]
     fn test_generate_axioms_from_all_eq_function() {
-        let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons (h, t) -> (h = x) && all_eq t x";
+        let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\n
+
+        let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool =
+        match l with | Nil -> true | Cons (h, t) -> (h = x) && all_eq t x";
         let parsed_nodes =
             OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
         assert_eq!(parsed_nodes.len(), 2, "Expected exactly two nodes (type + function)");
@@ -540,8 +598,8 @@ mod tests {
             axiom.proof = Some("grind".to_string());
         }
 
-        // Should generate axioms for all_eq: all_eq_nil and all_eq_cons
-        assert_eq!(axioms.len(), 2, "Expected 2 axioms for all_eq");
+        // Should generate axioms for all_eq: all_eq_nil, all_eq_cons, and their reverses
+        assert_eq!(axioms.len(), 4, "Expected 4 axioms for all_eq (forward and reverse)");
 
         // Validate generated theorems through Lean backend
         let lean_code = LeanContextBuilder::new()
