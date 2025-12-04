@@ -22,6 +22,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     match l with
     | Nil -> n = 0
     | Cons (x, xs) -> len xs (n - 1)";
+
     let parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
     assert_eq!(
         parsed_nodes.len(),

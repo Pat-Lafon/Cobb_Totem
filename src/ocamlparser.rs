@@ -169,8 +169,11 @@ impl OcamlParser {
                     let let_binding = self.parse_value_definition(&mut cursor);
                     nodes.push(AstNode::LetBinding(let_binding));
                 }
-                _ => {
-                    unimplemented!()
+                kind => {
+                    panic!(
+                        "Unexpected top-level node: '{}' (expected 'type_definition' or 'value_definition')",
+                        kind
+                    );
                 }
             }
 
@@ -1507,4 +1510,130 @@ mod tests {
 
         assert_parse(source, expected);
     }
+
+    #[test]
+    fn test_parse_let_with_single_attribute() {
+        assert_parse(
+            "let[@simp] test (x : int) : bool = true",
+            vec![AstNode::LetBinding(LetBinding {
+                name: VarName::new("test"),
+                attributes: vec!["simp".to_string()],
+                is_recursive: false,
+                params: vec![(VarName::new("x"), Type::Int)],
+                return_type: Some(Type::Bool),
+                body: Expression::Literal(Literal::Bool(true)),
+            })],
+        );
+    }
+
+    #[test]
+    fn test_parse_let_with_multiple_attributes() {
+        assert_parse(
+            "let[@simp][@grind] test (x : int) : bool = true",
+            vec![AstNode::LetBinding(LetBinding {
+                name: VarName::new("test"),
+                attributes: vec!["simp".to_string(), "grind".to_string()],
+                is_recursive: false,
+                params: vec![(VarName::new("x"), Type::Int)],
+                return_type: Some(Type::Bool),
+                body: Expression::Literal(Literal::Bool(true)),
+            })],
+        );
+    }
+
+    #[test]
+    fn test_parse_recursive_let_with_attributes() {
+        assert_parse(
+            "let[@reflect] rec fib (n : int) : int = match n with | 0 -> 0 | 1 -> 1 | x -> fib (x - 1)",
+            vec![let_binding_rec(
+                "fib",
+                vec!["reflect"],
+                vec![("n", Type::Int)],
+                Some(Type::Int),
+                Expression::Match(
+                    Box::new(Expression::Variable("n".into())),
+                    vec![
+                        (
+                            Pattern::Literal(Literal::Int(0)),
+                            Expression::Literal(Literal::Int(0)),
+                        ),
+                        (
+                            Pattern::Literal(Literal::Int(1)),
+                            Expression::Literal(Literal::Int(1)),
+                        ),
+                        (
+                            Pattern::Variable("x".into()),
+                            Expression::Application(
+                                Box::new(Expression::Variable("fib".into())),
+                                vec![Expression::BinaryOp(
+                                    Box::new(Expression::Variable("x".into())),
+                                    BinaryOp::Sub,
+                                    Box::new(Expression::Literal(Literal::Int(1))),
+                                )],
+                            ),
+                        ),
+                    ],
+                ),
+            )],
+        );
+    }
+
+    #[test]
+    fn test_parse_type_with_attributes_and_value_definition_with_attributes() {
+        let source = "type[@simp] ilist = Nil | Cons of int * int list
+let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest) -> 1 + len rest";
+
+        let expected = vec![
+            AstNode::TypeDeclaration(TypeDecl {
+                name: "ilist".to_string(),
+                variants: vec![
+                    Variant {
+                        name: "Nil".to_string(),
+                        fields: vec![],
+                    },
+                    Variant {
+                        name: "Cons".to_string(),
+                        fields: vec![Type::Int, Type::Named("int list".to_string())],
+                    },
+                ],
+                attributes: vec!["simp".to_string()],
+            }),
+            AstNode::LetBinding(LetBinding {
+                name: VarName::new("len"),
+                attributes: vec!["grind".to_string()],
+                is_recursive: true,
+                params: vec![(VarName::new("l"), Type::Named("ilist".to_string()))],
+                return_type: Some(Type::Int),
+                body: Expression::Match(
+                    Box::new(Expression::Variable("l".into())),
+                    vec![
+                        (
+                            Pattern::Constructor(
+                                ConstructorName::Simple("Nil".to_string()),
+                                vec![],
+                            ),
+                            Expression::Literal(Literal::Int(0)),
+                        ),
+                        (
+                            Pattern::Constructor(
+                                ConstructorName::Simple("Cons".to_string()),
+                                vec![Pattern::Wildcard, Pattern::Variable("rest".into())],
+                            ),
+                            Expression::BinaryOp(
+                                Box::new(Expression::Literal(Literal::Int(1))),
+                                BinaryOp::Add,
+                                Box::new(Expression::Application(
+                                    Box::new(Expression::Variable("len".into())),
+                                    vec![Expression::Variable("rest".into())],
+                                )),
+                            ),
+                        ),
+                    ],
+                ),
+            }),
+        ];
+
+        assert_parse(source, expected);
+    }
+
 }

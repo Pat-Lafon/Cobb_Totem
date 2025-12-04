@@ -21,10 +21,27 @@ assert_eq!(node.kind(), "expected_type", "Expected 'expected_type', got '{}'", n
 ## Testing and Binaries
 
 - Do not create additional binaries during development or testing
-- Use tests instead: add test cases to verify functionality
+- **Never create temporary/debug files** of any kind (e.g., `debug_tree.rs`, `test_parse.rs`, `debug_list_pattern.rs`)
+  - Analyze tree structures and behavior using the test suite within the module
+  - Use the test failures and output to understand behavior
+  - Do not create standalone files just to inspect output
+- Use tests instead: add test cases directly to the module's test module to explore functionality and verify behavior
 - Tests in the codebase serve as both validation and documentation
 - **Tests must make assertions, not just print output.** Every test should verify behavior with `assert!()`, `assert_eq!()`, or similar macros
-- Use `println!()` only for debugging during development; remove before committing
+- Use `eprintln!()` or `println!()` only for debugging during test development; remove before committing
+- Remove debug tests after gathering information (e.g., tests that only print tree structure for investigation)
+- **For string assertions, use `assert_eq!()` to compare the full expected string rather than multiple `assert!(string.contains(...))` checks.** This provides clearer error messages and is more precise.
+
+Example (avoid):
+```rust
+assert!(result.contains("def foo"));
+assert!(result.contains("(x : Int)"));
+```
+
+Example (preferred):
+```rust
+assert_eq!(result, "def foo(x : Int)");
+```
 
 ## Git Operations
 
