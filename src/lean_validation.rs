@@ -9,15 +9,16 @@ fn debug_enabled() -> bool {
 
 /// Validate generated Lean code by running the lean type checker via stdin
 pub fn validate_lean_code(code: &str) -> Result<(), String> {
-    // Wrap in namespace for recursive types and to isolate scope
-    let wrapped_code = format!("namespace GeneratedCode\n\n{}\n\nend GeneratedCode\n", code);
+    let wrapped_code = code.to_string();
 
     if debug_enabled() {
         debug_print_lean(code);
     }
 
-    // Run lean with code piped via stdin
-    let mut child = Command::new("lean")
+    // Run lean with code piped via stdin using lake env
+    let mut child = Command::new("lake")
+        .arg("env")
+        .arg("lean")
         .arg("--stdin")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())

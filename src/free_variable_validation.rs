@@ -122,6 +122,7 @@ mod tests {
             proof: None,
         };
 
-        assert!(axiom.validate_no_free_variables().is_ok());
+        axiom.validate_no_free_variables()
+            .unwrap_or_else(|e| panic!("Axiom validation failed: {}", e));
     }
 }

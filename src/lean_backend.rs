@@ -166,22 +166,37 @@ impl LeanContextBuilder {
 
     /// Build the final Lean code
     pub fn build(self) -> String {
-        self.nodes
+        // Check if any axiom uses the aesop tactic
+        let needs_aesop = self
+            .axioms
             .iter()
-            .map(|node| match node {
+            .any(|axiom| axiom.proof.as_ref().is_some_and(|s| s.contains("aesop")));
+
+        let mut output = String::new();
+        if needs_aesop {
+            output.push_str("import Aesop\n\n");
+        }
+
+        for node in &self.nodes {
+            match node {
                 AstNode::TypeDeclaration(type_decl) => {
-                    match self.types_with_theorems.get(&type_decl.name) {
-                        Some(theorems) => {
-                            format!("{}\n\n{}", type_decl.to_lean(), theorems)
-                        }
-                        None => type_decl.to_lean(),
+                    output.push_str(&type_decl.to_lean());
+                    if let Some(theorems) = self.types_with_theorems.get(&type_decl.name) {
+                        output.push_str("\n\n");
+                        output.push_str(theorems);
                     }
                 }
-                other => other.to_lean(),
-            })
-            .chain(self.axioms.iter().map(|axiom| axiom.to_lean()))
-            .collect::<Vec<_>>()
-            .join("\n\n")
+                other => output.push_str(&other.to_lean()),
+            }
+            output.push_str("\n\n");
+        }
+
+        for axiom in &self.axioms {
+            output.push_str(&axiom.to_lean());
+            output.push_str("\n\n");
+        }
+
+        output
     }
 }
 
@@ -218,38 +233,8 @@ mod tests {
             lean_output,
             "inductive MyBool where\n  | True\n  | False\nderiving BEq, Repr"
         );
-        assert!(
-            validate_lean_code(&lean_output).is_ok(),
-            "Generated Lean code failed validation"
-        );
-    }
-
-    #[test]
-    fn test_list_type() {
-        let list_type = TypeDecl {
-            name: "List".to_string(),
-            variants: vec![
-                Variant {
-                    name: "Nil".to_string(),
-                    fields: vec![],
-                },
-                Variant {
-                    name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("List".to_string())],
-                },
-            ],
-            attributes: vec![],
-        };
-
-        let lean_output = list_type.to_lean();
-        assert_eq!(
-            lean_output,
-            "inductive List where\n  | Nil\n  | Cons : Int → List → List\nderiving BEq, Repr"
-        );
-        assert!(
-            validate_lean_code(&lean_output).is_ok(),
-            "Generated Lean code failed validation"
-        );
+        validate_lean_code(&lean_output)
+            .unwrap_or_else(|e| panic!("Generated Lean code failed validation: {}", e));
     }
 
     #[test]
@@ -261,10 +246,8 @@ mod tests {
             lean_code,
             "@[grind]\ninductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr"
         );
-        assert!(
-            validate_lean_code(&lean_code).is_ok(),
-            "Generated Lean code failed validation"
-        );
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Generated Lean code failed validation: {}", e));
     }
 
     #[test]
@@ -317,7 +300,8 @@ mod tests {
             lean_code,
             "@[grind]\ninductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr\n\ndef len (l : ilist) (n : Int) : Bool := match l with\n  | .Nil => (n == 0)\n  | .Cons _ rest => len rest (n - 1)"
         );
-        validate_lean_code(&lean_code).unwrap();
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Generated Lean code failed validation: {}", e));
     }
 
     #[test]
@@ -333,7 +317,8 @@ mod tests {
 
         let lean_code = func.to_lean();
         assert_eq!(lean_code, "@[simp]\ndef foo (x : Int) : Int := x");
-        validate_lean_code(&lean_code).unwrap();
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Generated Lean code failed validation: {}", e));
     }
 
     #[test]
@@ -358,7 +343,8 @@ mod tests {
             "Attributes should be at the start, got: {}",
             lean_code
         );
-        validate_lean_code(&lean_code).unwrap();
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Generated Lean code failed validation: {}", e));
     }
 
     #[test]

@@ -1,9 +1,24 @@
 use crate::VarName;
 use crate::free_variable_validation::ValidateNoFreeVariables;
-use crate::prog_ir::{AstNode, LetBinding, Type, TypeDecl};
+use crate::prog_ir::{LetBinding, Type, TypeDecl};
 use crate::spec_ir::{Axiom, Expression, Parameter, Proposition, Quantifier};
 
-/// Takes a parsed program IR function and generates axioms in the spec IR
+/// Suggests an appropriate proof tactic based on axiom characteristics.
+/// Uses "aesop" for axioms with existential quantifiers, "grind" otherwise.
+pub fn suggest_proof_tactic(axiom: &Axiom) -> String {
+    if axiom
+        .params
+        .iter()
+        .find(|p| p.quantifier == Quantifier::Existential)
+        .is_some()
+    {
+        "aesop".to_string()
+    } else {
+        "grind".to_string()
+    }
+}
+
+/// Generates axioms in the spec IR from parsed program IR functions.
 pub struct AxiomGenerator {
     /// Type declarations for looking up constructor types
     pub type_constructors: Vec<TypeDecl>,

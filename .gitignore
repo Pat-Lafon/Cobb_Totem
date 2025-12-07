@@ -26,3 +26,9 @@ target
 /target
 
 *.lock
+
+# Lean
+.lake/
+build/
+lake-packages/
+*.olean

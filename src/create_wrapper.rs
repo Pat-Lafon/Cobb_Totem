@@ -1,10 +1,10 @@
 use crate::{
     VarName,
-    prog_ir::{AstNode, BinaryOp, Expression, LetBinding, Type},
+    prog_ir::{BinaryOp, Expression, LetBinding, Type},
 };
 
 /// Generate a wrapper function that checks `f(...params) == res` for a given function
-pub fn create_wrapper(binding: &LetBinding) -> AstNode {
+pub fn create_wrapper(binding: &LetBinding) -> LetBinding {
     const RESULT_PARAM: &str = "res";
 
     assert!(
@@ -29,7 +29,7 @@ pub fn create_wrapper(binding: &LetBinding) -> AstNode {
     let mut wrapper_params = binding.params.clone();
     wrapper_params.push((VarName::new(RESULT_PARAM), return_type.clone()));
 
-    AstNode::LetBinding(LetBinding {
+    LetBinding {
         name: VarName::new(wrapper_name),
         attributes: binding.attributes.clone(),
         is_recursive: false,
@@ -43,7 +43,7 @@ pub fn create_wrapper(binding: &LetBinding) -> AstNode {
             BinaryOp::Eq,
             Box::new(Expression::Variable(VarName::new(RESULT_PARAM))),
         ),
-    })
+    }
 }
 
 #[cfg(test)]
@@ -51,6 +51,7 @@ mod tests {
     use super::*;
     use crate::lean_backend::LeanContextBuilder;
     use crate::ocamlparser::OcamlParser;
+    use crate::prog_ir::AstNode;
 
     #[test]
     fn test_transform_length_function() {
@@ -66,7 +67,7 @@ mod tests {
         let transformed = create_wrapper(&binding);
 
         let lean_code = LeanContextBuilder::new()
-            .with_nodes(vec![transformed])
+            .with_nodes(vec![AstNode::LetBinding(transformed)])
             .build();
 
         let expected = r#"@[simp, grind]
@@ -89,7 +90,7 @@ def len_wrapper (l : ilist) (res : Int) : Bool := (len l == res)"#;
         let transformed = create_wrapper(&binding);
 
         let lean_code = LeanContextBuilder::new()
-            .with_nodes(vec![transformed])
+            .with_nodes(vec![AstNode::LetBinding(transformed)])
             .build();
 
         let expected = r#"@[simp]
@@ -113,7 +114,7 @@ def add_wrapper (x : Int) (y : Int) (res : Int) : Bool := (add x y == res)"#;
         let transformed = create_wrapper(&binding);
 
         let lean_code = LeanContextBuilder::new()
-            .with_nodes(vec![transformed])
+            .with_nodes(vec![AstNode::LetBinding(transformed)])
             .build();
 
         let expected = r#"@[simp]

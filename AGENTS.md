@@ -31,20 +31,31 @@ assert_eq!(node.kind(), "expected_type", "Expected 'expected_type', got '{}'", n
 - Use `eprintln!()` or `println!()` only for debugging during test development; remove before committing
 - Remove debug tests after gathering information (e.g., tests that only print tree structure for investigation)
 - **For string assertions, use `assert_eq!()` to compare the full expected string rather than multiple `assert!(string.contains(...))` checks.** This provides clearer error messages and is more precise.
+- **Use precise assertions with exact values, not inequalities.** Never use `assert!(value >= expected)` or `assert!(value <= expected)` when you know the exact expected value. Use `assert_eq!(value, expected)` instead. Imprecise assertions hide bugs and make tests less meaningful.
+- **Never suppress error messages in tests.** When validating Results, use `.unwrap_or_else(|e| panic!(...))` to include the error details instead of `.is_ok()`, `.unwrap()`, or similar patterns that hide the actual error.
+- **Test observable behavior, not just naming or structure.** Don't just assert that a field has an expected name; verify the actual content, relationships, and output of generated objects.
+  - Instead of `assert_eq!(axiom.name, "len_0")`, assert the complete Lean output with `assert_eq!(axiom.to_lean(), "theorem ...")`
+  - Verify parameter counts and types: `assert_eq!(axiom.params.len(), 2)`
+  - Check structural properties: `assert!(matches!(axiom.body, Proposition::Implication(_, _)))`
+  - This catches semantic errors that a name alone cannot reveal
 
 Example (avoid):
 ```rust
 assert!(result.contains("def foo"));
 assert!(result.contains("(x : Int)"));
+assert!(validate().is_ok(), "validation failed");
+validate().unwrap();
 ```
 
 Example (preferred):
 ```rust
 assert_eq!(result, "def foo(x : Int)");
+validate().unwrap_or_else(|e| panic!("validation failed: {}", e));
 ```
 
 ## Git Operations
 
 - Do not modify or create `.gitignore` rules
 - Do not use git commands unless explicitly requested by the user
+- **Never use `git reset`** - this can lose work
 - Let the user manage their own git workflow (commits, branches, etc.)

@@ -229,6 +229,23 @@ impl ToLean for Proposition {
     }
 }
 
+impl Expression {
+    /// Check if an expression is a comparison/equality (pattern constraint), not arithmetic
+    pub fn is_comparison(&self) -> bool {
+        matches!(
+            self,
+            Expression::BinaryOp(_, op, _) if matches!(
+                op,
+                BinaryOp::Eq
+                    | BinaryOp::Lt
+                    | BinaryOp::Gt
+                    | BinaryOp::Lte
+                    | BinaryOp::Gte
+            )
+        )
+    }
+}
+
 impl fmt::Display for Expression {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {

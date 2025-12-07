@@ -1,29 +1,29 @@
 use cobb_totem::ToLean as _;
-use cobb_totem::axiom_generator::AxiomGenerator;
+use cobb_totem::axiom_generator::{AxiomGenerator, suggest_proof_tactic};
 use cobb_totem::lean_backend::LeanContextBuilder;
 use cobb_totem::lean_validation::validate_lean_code;
 use cobb_totem::ocamlparser::OcamlParser;
 use cobb_totem::prog_ir::AstNode;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-  /*   let program_str = "
+    let program_str = "
     type [@grind] ilist = Nil | Cons of int * ilist\n
 
     let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with
     | Nil -> true
     | Cons (x, xs) -> match xs with
     | Nil -> true
-    | Cons (y, ys) -> (x <= y) && sorted xs"; */
+    | Cons (y, ys) -> (x <= y) && sorted xs";
 
-        let program_str = "
+    /*  let program_str = "
     type [@grind] ilist = Nil | Cons of int * ilist\n
 
-    let [@simp] [@grind] rec len (l : ilist) (n : int) : bool =
+    let [@simp] [@grind] rec len (l : ilist) : int =
     match l with
-    | Nil -> n = 0
-    | Cons (x, xs) -> len xs (n - 1)";
+    | Nil -> 0
+    | Cons (x, xs) -> 1 + len xs"; */
 
-    let parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
+    let mut parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
     assert_eq!(
         parsed_nodes.len(),
         2,
@@ -47,27 +47,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .expect("Expected to find sorted function binding");
 
     let generator = AxiomGenerator::new(vec![ilist_type.clone()]);
-    let mut axioms = generator
-        .from_let_binding(&sorted_function)
-        .expect("Failed to generate axioms");
+    let mut builder = generator
+        .prepare_function(&sorted_function)?
+        .with_proof(suggest_proof_tactic);
 
-    // Set proof to grind for all axioms
-    for axiom in &mut axioms {
-        axiom.proof = Some("grind".to_string());
-    }
+    let wrapper_binding = builder.create_wrapper();
+    parsed_nodes.push(AstNode::LetBinding(wrapper_binding));
+
+    let axioms = builder.build_both()?;
 
     println!("Generated axioms:");
     for axiom in &axioms {
         println!("{}", axiom.to_lean());
-
-        /* todo add display */
-        /* Use a typical form for length functions and transform */
-        /* Consider variations that include existentials */
-        /* Work on the reverse direction */
-        /* Alternative proof structures */
-        /* Weakest postcondition connection? */
-        /* Relational encoding phrase */
     }
+
+    /* todo add display */
+    /* Use a typical form for length functions and transform */
+    /* Consider variations that include existentials */
+    /* Work on the reverse direction */
+    /* Alternative proof structures */
+    /* Weakest postcondition connection? */
+    /* Relational encoding phrase */
 
     // Validate generated theorems through Lean backend
     let lean_code = LeanContextBuilder::new()
