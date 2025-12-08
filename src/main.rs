@@ -6,22 +6,22 @@ use cobb_totem::ocamlparser::OcamlParser;
 use cobb_totem::prog_ir::AstNode;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let program_str = "
+    /* let program_str = "
     type [@grind] ilist = Nil | Cons of int * ilist\n
 
     let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with
     | Nil -> true
     | Cons (x, xs) -> match xs with
     | Nil -> true
-    | Cons (y, ys) -> (x <= y) && sorted xs";
+    | Cons (y, ys) -> (x <= y) && sorted xs"; */
 
-    /*  let program_str = "
+     let program_str = "
     type [@grind] ilist = Nil | Cons of int * ilist\n
 
     let [@simp] [@grind] rec len (l : ilist) : int =
     match l with
     | Nil -> 0
-    | Cons (x, xs) -> 1 + len xs"; */
+    | Cons (x, xs) -> 1 + len xs";
 
     let mut parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
     assert_eq!(

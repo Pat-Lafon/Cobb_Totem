@@ -153,6 +153,67 @@ impl ToLean for Axiom {
     }
 }
 
+impl Proposition {
+    /// Fold over the structure of a proposition, applying a transformation function at each node.
+    /// The transformation function receives the current proposition and must return the transformed result.
+    /// This enables bottom-up structural transformations on the proposition tree.
+    pub fn fold<F>(self, f: &F) -> Proposition
+    where
+        F: Fn(Proposition) -> Proposition,
+    {
+        let folded = match self {
+            Proposition::Expr(expr) => Proposition::Expr(expr),
+            Proposition::Predicate(name, args) => Proposition::Predicate(name, args),
+            Proposition::Implication(ant, cons) => Proposition::Implication(
+                Box::new(ant.fold(f)),
+                Box::new(cons.fold(f)),
+            ),
+            Proposition::Equality(left, right) => Proposition::Equality(
+                Box::new(left.fold(f)),
+                Box::new(right.fold(f)),
+            ),
+            Proposition::And(left, right) => Proposition::And(
+                Box::new(left.fold(f)),
+                Box::new(right.fold(f)),
+            ),
+            Proposition::Or(left, right) => Proposition::Or(
+                Box::new(left.fold(f)),
+                Box::new(right.fold(f)),
+            ),
+            Proposition::Not(inner) => Proposition::Not(Box::new(inner.fold(f))),
+            Proposition::Iff(left, right) => Proposition::Iff(
+                Box::new(left.fold(f)),
+                Box::new(right.fold(f)),
+            ),
+        };
+        f(folded)
+    }
+
+    /// Validate that this proposition does not contain Implication or Equality propositions.
+    /// Panics with descriptive messages if violations are found.
+    /// Assumes that step propositions should only contain: Expr, Predicate, And, Or, Not, Iff.
+    pub fn assert_no_implications_or_equalities(&self) {
+        match self {
+            Proposition::Implication(_, _) => panic!("Steps should not contain Implication propositions; these are composed after augmentation"),
+            Proposition::Equality(_, _) => panic!("Steps should not contain Equality propositions; only expressions can be equalities"),
+            Proposition::And(left, right) => {
+                left.assert_no_implications_or_equalities();
+                right.assert_no_implications_or_equalities();
+            }
+            Proposition::Or(left, right) => {
+                left.assert_no_implications_or_equalities();
+                right.assert_no_implications_or_equalities();
+            }
+            Proposition::Not(inner) => inner.assert_no_implications_or_equalities(),
+            Proposition::Iff(left, right) => {
+                left.assert_no_implications_or_equalities();
+                right.assert_no_implications_or_equalities();
+            }
+            _ => {}
+        }
+    }
+}
+
 impl fmt::Display for Proposition {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {

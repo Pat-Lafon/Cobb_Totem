@@ -3,9 +3,11 @@ use crate::{
     prog_ir::{BinaryOp, Expression, LetBinding, Type},
 };
 
+/// Result parameter name used in wrapper functions
+pub const RESULT_PARAM: &str = "res";
+
 /// Generate a wrapper function that checks `f(...params) == res` for a given function
 pub fn create_wrapper(binding: &LetBinding) -> LetBinding {
-    const RESULT_PARAM: &str = "res";
 
     assert!(
         !binding.params.is_empty(),

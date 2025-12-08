@@ -2,7 +2,7 @@ use itertools::Itertools as _;
 
 use crate::{
     VarName,
-    spec_ir::{Axiom, Expression, Proposition},
+    spec_ir::{Axiom, Expression, Proposition, Quantifier},
 };
 
 fn collect_all_variables(prop: &Proposition) -> std::collections::HashSet<VarName> {
@@ -45,11 +45,29 @@ fn collect_variables_in_expr(expr: &Expression, vars: &mut std::collections::Has
     }
 }
 
-pub(crate) trait ValidateNoFreeVariables {
-    fn validate_no_free_variables(&self) -> Result<(), String>;
-}
+impl Axiom {
+    pub fn validate(&self) -> Result<(), String> {
+        self.validate_quantifier_order()?;
+        self.validate_no_free_variables()
+    }
 
-impl ValidateNoFreeVariables for Axiom {
+    /// Validate that all universal parameters come before all existential parameters
+    fn validate_quantifier_order(&self) -> Result<(), String> {
+        self.params
+            .iter()
+            .try_fold(false, |found_existential, param| {
+                match (found_existential, &param.quantifier) {
+                    (true, Quantifier::Universal) => Err(format!(
+                        "Axiom '{}': Found universal quantifier after existential quantifier. \
+                         All universals must come before existentials.",
+                        self.name
+                    )),
+                    _ => Ok(param.quantifier == Quantifier::Existential || found_existential),
+                }
+            })?;
+        Ok(())
+    }
+
     /// Check that all variables in the body are declared as parameters
     fn validate_no_free_variables(&self) -> Result<(), String> {
         let declared_vars: std::collections::HashSet<_> =
@@ -122,7 +140,8 @@ mod tests {
             proof: None,
         };
 
-        axiom.validate_no_free_variables()
+        axiom
+            .validate_no_free_variables()
             .unwrap_or_else(|e| panic!("Axiom validation failed: {}", e));
     }
 }
