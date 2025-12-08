@@ -55,7 +55,9 @@ validate().unwrap_or_else(|e| panic!("validation failed: {}", e));
 
 ## Git Operations
 
+- **DO NOT USE GIT COMMANDS.** Period. This includes `git checkout`, `git reset`, `git revert`, `git clean`, etc.
+  - Using git commands can **permanently lose work and corrupt the repository state**
+  - The user manages their own version control - do not intervene
+  - If you make a mistake editing a file, acknowledge it and ask the user how to proceed
 - Do not modify or create `.gitignore` rules
-- Do not use git commands unless explicitly requested by the user
-- **Never use `git reset`** - this can lose work
 - Let the user manage their own git workflow (commits, branches, etc.)
