@@ -40,7 +40,7 @@ pub struct Parameter {
 }
 
 /// A logical proposition that can appear in axiom bodies
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Proposition {
     /// A bare expression
     Expr(Expression),
@@ -125,6 +125,27 @@ impl ToLean for Parameter {
     }
 }
 
+impl Axiom {
+    /// Suggests an appropriate proof tactic based on axiom characteristics.
+    /// Uses "aesop" for axioms with existential quantifiers, "grind" otherwise.
+    pub fn suggest_proof_tactic(&self) -> String {
+        if self
+            .params
+            .iter()
+            .find(|p| p.quantifier == Quantifier::Existential)
+            .is_some()
+        {
+            "\ntry aesop (config := { maxRuleHeartbeats := 20000 })
+intros
+refine ⟨?_, ?_⟩ <;> aesop
+"
+            .to_string()
+        } else {
+            "grind".to_string()
+        }
+    }
+}
+
 impl fmt::Display for Axiom {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "let[@axiom] {}", self.name)?;
@@ -164,29 +185,31 @@ impl Proposition {
         let folded = match self {
             Proposition::Expr(expr) => Proposition::Expr(expr),
             Proposition::Predicate(name, args) => Proposition::Predicate(name, args),
-            Proposition::Implication(ant, cons) => Proposition::Implication(
-                Box::new(ant.fold(f)),
-                Box::new(cons.fold(f)),
-            ),
-            Proposition::Equality(left, right) => Proposition::Equality(
-                Box::new(left.fold(f)),
-                Box::new(right.fold(f)),
-            ),
-            Proposition::And(left, right) => Proposition::And(
-                Box::new(left.fold(f)),
-                Box::new(right.fold(f)),
-            ),
-            Proposition::Or(left, right) => Proposition::Or(
-                Box::new(left.fold(f)),
-                Box::new(right.fold(f)),
-            ),
+            Proposition::Implication(ant, cons) => {
+                Proposition::Implication(Box::new(ant.fold(f)), Box::new(cons.fold(f)))
+            }
+            Proposition::Equality(left, right) => {
+                Proposition::Equality(Box::new(left.fold(f)), Box::new(right.fold(f)))
+            }
+            Proposition::And(left, right) => {
+                Proposition::And(Box::new(left.fold(f)), Box::new(right.fold(f)))
+            }
+            Proposition::Or(left, right) => {
+                Proposition::Or(Box::new(left.fold(f)), Box::new(right.fold(f)))
+            }
             Proposition::Not(inner) => Proposition::Not(Box::new(inner.fold(f))),
-            Proposition::Iff(left, right) => Proposition::Iff(
-                Box::new(left.fold(f)),
-                Box::new(right.fold(f)),
-            ),
+            Proposition::Iff(left, right) => {
+                Proposition::Iff(Box::new(left.fold(f)), Box::new(right.fold(f)))
+            }
         };
         f(folded)
+    }
+
+    pub fn as_expr(&self) -> &Expression {
+        match self {
+            Proposition::Expr(expression) => expression,
+            _ => panic!("Only call on an expression"),
+        }
     }
 
     /// Validate that this proposition does not contain Implication or Equality propositions.
@@ -194,8 +217,12 @@ impl Proposition {
     /// Assumes that step propositions should only contain: Expr, Predicate, And, Or, Not, Iff.
     pub fn assert_no_implications_or_equalities(&self) {
         match self {
-            Proposition::Implication(_, _) => panic!("Steps should not contain Implication propositions; these are composed after augmentation"),
-            Proposition::Equality(_, _) => panic!("Steps should not contain Equality propositions; only expressions can be equalities"),
+            Proposition::Implication(_, _) => panic!(
+                "Steps should not contain Implication propositions; these are composed after augmentation"
+            ),
+            Proposition::Equality(_, _) => panic!(
+                "Steps should not contain Equality propositions; only expressions can be equalities"
+            ),
             Proposition::And(left, right) => {
                 left.assert_no_implications_or_equalities();
                 right.assert_no_implications_or_equalities();

@@ -1,5 +1,5 @@
 use cobb_totem::ToLean as _;
-use cobb_totem::axiom_generator::{AxiomGenerator, suggest_proof_tactic};
+use cobb_totem::axiom_generator::AxiomGenerator;
 use cobb_totem::lean_backend::LeanContextBuilder;
 use cobb_totem::lean_validation::validate_lean_code;
 use cobb_totem::ocamlparser::OcamlParser;
@@ -15,7 +15,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     | Nil -> true
     | Cons (y, ys) -> (x <= y) && sorted xs"; */
 
-     let program_str = "
+    let program_str = "
     type [@grind] ilist = Nil | Cons of int * ilist\n
 
     let [@simp] [@grind] rec len (l : ilist) : int =
@@ -46,10 +46,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         })
         .expect("Expected to find sorted function binding");
 
-    let generator = AxiomGenerator::new(vec![ilist_type.clone()]);
+    let mut generator = AxiomGenerator::new(vec![ilist_type.clone()]);
     let mut builder = generator
         .prepare_function(&sorted_function)?
-        .with_proof(suggest_proof_tactic);
+        .with_proof(|a| a.suggest_proof_tactic());
 
     let wrapper_binding = builder.create_wrapper();
     parsed_nodes.push(AstNode::LetBinding(wrapper_binding));
@@ -81,7 +81,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     validate_lean_code(&lean_code)
         .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
 
-    println!("\nLean validation passed!");
+    println!("Lean validation passed!");
 
     Ok(())
 }
