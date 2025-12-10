@@ -370,8 +370,12 @@ impl Variant {
         if self.fields.is_empty() {
             self.name.clone()
         } else {
-            let mut field_strs = self.fields.iter().map(|f| f.to_lean()).collect::<Vec<_>>();
-            field_strs.push(return_type.to_string());
+            let field_strs: Vec<String> = self
+                .fields
+                .iter()
+                .map(|f| f.to_lean())
+                .chain(std::iter::once(return_type.to_string()))
+                .collect();
             let type_sig = field_strs.join(" → ");
             format!("{} : {}", self.name, type_sig)
         }
@@ -695,6 +699,18 @@ mod tests {
     };
     use crate::{ToLean, VarName};
 
+    /// Helper to validate complete LawfulBEq implementation
+    fn assert_lawful_beq_valid(type_decl: &TypeDecl, beq_attributes: &str, theorems: &str, instance: &str) {
+        validate_lean_code(&format!(
+            "{}\n{}\n{}\n{}",
+            type_decl.to_lean(),
+            beq_attributes,
+            theorems,
+            instance
+        ))
+        .unwrap_or_else(|e| panic!("{} with LawfulBEq Lean validation failed: {}", type_decl.name, e));
+    }
+
     #[test]
     fn test_parse_sorted_predicate() {
         // Define the sorted predicate with nested matches
@@ -858,11 +874,7 @@ mod tests {
         let expected_instance = "@[grind ., simp]\ninstance : LawfulBEq MyBool where\n  eq_of_beq {a b} h := by\n    induction a generalizing b with\n    | True => grind\n    | False => grind\n  rfl {a} := by\n    induction a with\n    | True => grind\n    | False => grind";
         assert_eq!(instance, expected_instance);
 
-        validate_lean_code(&format!(
-            "{}\n{beq_attributes}\n{theorems}\n{instance}",
-            bool_type.to_lean(),
-        ))
-        .unwrap_or_else(|e| panic!("MyBool with LawfulBEq Lean validation failed: {}", e));
+        assert_lawful_beq_valid(&bool_type, &beq_attributes, &theorems, &instance);
     }
 
     #[test]
@@ -898,11 +910,7 @@ mod tests {
         let expected_lawful = "@[grind ., simp]\ninstance : LawfulBEq ilist where\n  eq_of_beq {a b} h := by\n    induction a generalizing b with\n    | Nil => grind\n    | Cons x0 x1 => grind\n  rfl {a} := by\n    induction a with\n    | Nil => grind\n    | Cons x0 x1 ih => grind";
         assert_eq!(lawful_beq, expected_lawful);
 
-        validate_lean_code(&format!(
-            "{}\n{beq_attributes}\n{beq_theorems}\n{lawful_beq}",
-            ilist_type.to_lean(),
-        ))
-        .unwrap_or_else(|e| panic!("ilist with LawfulBEq Lean validation failed: {}", e));
+        assert_lawful_beq_valid(&ilist_type, &beq_attributes, &beq_theorems, &lawful_beq);
     }
 
     #[test]
@@ -942,10 +950,6 @@ mod tests {
         let expected_instance = "@[grind ., simp]\ninstance : LawfulBEq tree where\n  eq_of_beq {a b} h := by\n    induction a generalizing b with\n    | Leaf => grind\n    | Node x0 x1 x2 => grind\n  rfl {a} := by\n    induction a with\n    | Leaf => grind\n    | Node x0 x1 x2 ih => grind";
         assert_eq!(instance, expected_instance);
 
-        validate_lean_code(&format!(
-            "{}\n{beq_attributes}\n{theorems}\n{instance}",
-            tree_type.to_lean(),
-        ))
-        .unwrap_or_else(|e| panic!("tree with LawfulBEq Lean validation failed: {}", e));
+        assert_lawful_beq_valid(&tree_type, &beq_attributes, &theorems, &instance);
     }
 }
