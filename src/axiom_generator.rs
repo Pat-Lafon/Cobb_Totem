@@ -85,13 +85,15 @@ impl AxiomGenerator {
     /// Extract expressions with their preceding proposition steps and parameters.
     /// For each argument, returns: the final expression, preceding propositions, and new parameters.
     fn extract_exprs_with_steps(
-        results_list: Vec<Vec<BodyPropositionData>>,
+        &mut self,
+        exprs: Vec<&crate::prog_ir::Expression>,
     ) -> Result<(Vec<Expression>, Vec<Vec<Proposition>>, Vec<Parameter>), String> {
         let mut all_exprs = Vec::new();
         let mut all_preceding_steps = Vec::new();
         let mut all_params = Vec::new();
 
-        for results in results_list {
+        for expr in exprs {
+            let results = self.from_expression(expr);
             if results.len() != 1 {
                 return Err(format!(
                     "Expected exactly one result, got {}",
@@ -212,10 +214,9 @@ impl AxiomGenerator {
                 additional_parameters: vec![],
             }],
             crate::prog_ir::Expression::UnaryOp(unary_op, expression) => {
-                let (exprs, preceding_steps_list, params) = Self::extract_exprs_with_steps(vec![
-                    self.from_expression(expression),
-                ])
-                .unwrap_or_else(|e| panic!("UnaryOp operand: {}", e));
+                let (exprs, preceding_steps_list, params) = self
+                    .extract_exprs_with_steps(vec![expression])
+                    .unwrap_or_else(|e| panic!("UnaryOp operand: {}", e));
 
                 assert_eq!(exprs.len(), 1, "UnaryOp requires exactly 1 expression");
 
@@ -231,11 +232,9 @@ impl AxiomGenerator {
                 }]
             }
             crate::prog_ir::Expression::BinaryOp(expression, binary_op, expression1) => {
-                let (exprs, preceding_steps_list, params) = Self::extract_exprs_with_steps(vec![
-                    self.from_expression(&expression),
-                    self.from_expression(&expression1),
-                ])
-                .unwrap_or_else(|e| panic!("BinaryOp operand: {}", e));
+                let (exprs, preceding_steps_list, params) = self
+                    .extract_exprs_with_steps(vec![&expression, &expression1])
+                    .unwrap_or_else(|e| panic!("BinaryOp operand: {}", e));
 
                 assert_eq!(exprs.len(), 2, "BinaryOp requires exactly 2 expressions");
 
@@ -261,13 +260,8 @@ impl AxiomGenerator {
                 };
 
                 // Create a wrapper predicate with an existential parameter for function applications
-                let (mut converted_args, preceding_steps_per_arg, arg_params) =
-                    Self::extract_exprs_with_steps(
-                        arg_exprs
-                            .iter()
-                            .map(|expr| self.from_expression(expr))
-                            .collect(),
-                    )
+                let (mut converted_args, preceding_steps_per_arg, arg_params) = self
+                    .extract_exprs_with_steps(arg_exprs.iter().collect())
                     .unwrap_or_else(|e| panic!("Application argument: {}", e));
 
                 let exists_var = self.next_var();
@@ -284,17 +278,16 @@ impl AxiomGenerator {
                 // Look up the function's return type if available
                 let func_return_type = self.get_function_type(&func_name).cloned();
 
-                let mut all_params = arg_params;
-                all_params.push(Parameter {
-                    name: exists_var,
-                    typ: func_return_type
+                let mut additional_parameters = arg_params;
+                additional_parameters.push(Parameter::existential(
+                    exists_var,
+                    func_return_type
                         .unwrap_or_else(|| panic!("Function '{}' type not registered", func_name)),
-                    quantifier: Quantifier::Existential,
-                });
+                ));
 
                 vec![BodyPropositionData {
                     proposition_steps,
-                    additional_parameters: all_params,
+                    additional_parameters,
                 }]
             }
             crate::prog_ir::Expression::Match(scrutinee, cases) => {
@@ -310,11 +303,10 @@ impl AxiomGenerator {
                     let result_toggle = branch_results.len() == 1;
                     for branch_body_data in branch_results {
                         let pattern_vars = self.vars_from_pattern(pattern);
-                        let pattern_expr = self.expr_from_pattern(pattern);
                         let pattern_constraint = Proposition::Expr(Expression::BinaryOp(
                             Box::new(pattern_constraint_base.clone()),
                             crate::prog_ir::BinaryOp::Eq,
-                            Box::new(pattern_expr),
+                            Box::new(self.expr_from_pattern(pattern)),
                         ));
                         let final_steps = if result_toggle {
                             let (last, rest) =
@@ -352,12 +344,9 @@ impl AxiomGenerator {
                 else_branch,
             } => {
                 // Extract condition, then, and else branches with their preceding steps
-                let (exprs, preceding_steps_list, params) = Self::extract_exprs_with_steps(vec![
-                    self.from_expression(condition),
-                    self.from_expression(then_branch),
-                    self.from_expression(else_branch),
-                ])
-                .unwrap_or_else(|e| panic!("IfThenElse expression: {}", e));
+                let (exprs, preceding_steps_list, params) = self
+                    .extract_exprs_with_steps(vec![condition, then_branch, else_branch])
+                    .unwrap_or_else(|e| panic!("IfThenElse expression: {}", e));
 
                 assert_eq!(exprs.len(), 3, "IfThenElse requires exactly 3 expressions");
 
