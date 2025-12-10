@@ -8,7 +8,6 @@ pub const RESULT_PARAM: &str = "res";
 
 /// Generate a wrapper function that checks `f(...params) == res` for a given function
 pub fn create_wrapper(binding: &LetBinding) -> LetBinding {
-
     assert!(
         !binding.params.is_empty(),
         "Function must have at least one parameter"

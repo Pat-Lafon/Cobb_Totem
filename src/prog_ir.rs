@@ -198,7 +198,7 @@ impl TypeDecl {
                             variant2.name.to_lowercase()
                         );
                         let theorem = format!(
-                            "@[simp, grind =] theorem {} : ({}.{} == {}.{}) = true := rfl",
+                            "@[simp, grind =] theorem {} : ({}.{} == {}.{}) = true := by\n  simp",
                             theorem_name, self.name, variant1.name, self.name, variant2.name
                         );
                         theorems.push(theorem);
@@ -224,7 +224,7 @@ impl TypeDecl {
                             variant2.name.to_lowercase()
                         );
                         let theorem = format!(
-                            "@[simp, grind =] theorem {} :\n  ({}.{} {} == {}.{} {}) = ({}) := rfl",
+                            "@[simp, grind =] theorem {} :\n  ({}.{} {} == {}.{} {}) = ({}) := by\n  simp",
                             theorem_name,
                             self.name,
                             variant1.name,
@@ -257,7 +257,7 @@ impl TypeDecl {
                         format!(" {}", vars.join(" "))
                     };
                     let theorem = format!(
-                        "@[simp, grind =] theorem {} : ({}.{}{} == {}.{}{}) = false := rfl",
+                        "@[simp, grind =] theorem {} : ({}.{}{} == {}.{}{}) = false := by\n  simp",
                         theorem_name,
                         self.name,
                         variant1.name,
@@ -317,9 +317,24 @@ impl TypeDecl {
     /// Generate complete LawfulBEq support (theorems + instance) for this type
     pub fn generate_complete_lawful_beq(&self) -> String {
         format!(
-            "{}\n\n{}",
+            "{}\n\n{}\n\n{}",
+            self.generate_beq_attribute(),
             self.generate_beq_theorems(),
             self.generate_lawful_beq_instance()
+        )
+    }
+
+    /// Generate the attribute line that registers BEq lemmas with simp and grind
+    fn generate_beq_attribute(&self) -> String {
+        // Capitalize first letter for the instance name
+        let capitalized = format!(
+            "{}{}",
+            self.name.chars().next().unwrap().to_uppercase(),
+            &self.name[1..]
+        );
+        format!(
+            "attribute [simp, grind =] BEq.beq instBEq{}.beq Bool.and_assoc",
+            capitalized
         )
     }
 }
@@ -555,6 +570,11 @@ pub enum Expression {
     Application(Box<Expression>, Vec<Expression>),
     Match(Box<Expression>, Vec<(Pattern, Expression)>),
     Tuple(Vec<Expression>),
+    IfThenElse {
+        condition: Box<Expression>,
+        then_branch: Box<Expression>,
+        else_branch: Box<Expression>,
+    },
 }
 
 impl fmt::Display for Expression {
@@ -616,6 +636,13 @@ impl fmt::Display for Expression {
                     )
                 }
             }
+            Expression::IfThenElse {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                write!(f, "(ite {} {} {})", condition, then_branch, else_branch)
+            }
         }
     }
 }
@@ -661,11 +688,12 @@ impl fmt::Display for AstNode {
 
 #[cfg(test)]
 mod tests {
-    use crate::VarName;
+    use crate::lean_validation::validate_lean_code;
     use crate::ocamlparser::OcamlParser;
     use crate::prog_ir::{
         AstNode, BinaryOp, ConstructorName, Expression, Literal, Pattern, Type, TypeDecl, Variant,
     };
+    use crate::{ToLean, VarName};
 
     #[test]
     fn test_parse_sorted_predicate() {
@@ -746,21 +774,6 @@ mod tests {
     }
 
     #[test]
-    fn test_variant_display() {
-        let nil = Variant {
-            name: "Nil".to_string(),
-            fields: vec![],
-        };
-        assert_eq!(nil.to_string(), "Nil");
-
-        let cons = Variant {
-            name: "Cons".to_string(),
-            fields: vec![Type::Int, Type::Named("int list".to_string())],
-        };
-        assert_eq!(cons.to_string(), "Cons of int * int list");
-    }
-
-    #[test]
     fn test_type_decl_display() {
         let ilist = TypeDecl {
             name: "ilist".to_string(),
@@ -829,34 +842,27 @@ mod tests {
             attributes: vec!["grind".to_string()],
         };
 
-        // Verify theorem generation
+        let beq_attributes = bool_type.generate_beq_attribute();
+        let expected_attributes =
+            "attribute [simp, grind =] BEq.beq instBEqMyBool.beq Bool.and_assoc";
+        assert_eq!(beq_attributes, expected_attributes);
+
         let theorems = bool_type.generate_beq_theorems();
-        let expected = "@[simp, grind =] theorem MyBool.beq_true_true : (MyBool.True == MyBool.True) = true := rfl\n\
-                       @[simp, grind =] theorem MyBool.beq_true_false : (MyBool.True == MyBool.False) = false := rfl\n\
-                       @[simp, grind =] theorem MyBool.beq_false_true : (MyBool.False == MyBool.True) = false := rfl\n\
-                       @[simp, grind =] theorem MyBool.beq_false_false : (MyBool.False == MyBool.False) = true := rfl";
-        assert_eq!(theorems, expected);
+        let expected_theorems = "@[simp, grind =] theorem MyBool.beq_true_true : (MyBool.True == MyBool.True) = true := by\n  simp\n\
+                                @[simp, grind =] theorem MyBool.beq_true_false : (MyBool.True == MyBool.False) = false := by\n  simp\n\
+                                @[simp, grind =] theorem MyBool.beq_false_true : (MyBool.False == MyBool.True) = false := by\n  simp\n\
+                                @[simp, grind =] theorem MyBool.beq_false_false : (MyBool.False == MyBool.False) = true := by\n  simp";
+        assert_eq!(theorems, expected_theorems);
 
-        // Verify instance structure
         let instance = bool_type.generate_lawful_beq_instance();
-        assert!(instance.contains("instance : LawfulBEq MyBool"));
-        assert!(instance.contains("eq_of_beq"));
-        assert!(instance.contains("induction a generalizing b with"));
-        assert!(instance.contains("| True => grind"));
-        assert!(instance.contains("| False => grind"));
+        let expected_instance = "@[grind ., simp]\ninstance : LawfulBEq MyBool where\n  eq_of_beq {a b} h := by\n    induction a generalizing b with\n    | True => grind\n    | False => grind\n  rfl {a} := by\n    induction a with\n    | True => grind\n    | False => grind";
+        assert_eq!(instance, expected_instance);
 
-        // Validate complete lawful beq (theorems + instance) with Lean code
-        let complete = bool_type.generate_complete_lawful_beq();
-        let lean_code = crate::lean_backend::LeanContextBuilder::new()
-            .with_nodes(vec![AstNode::TypeDeclaration(bool_type)])
-            .with_type_theorems("MyBool", complete)
-            .build();
-        crate::lean_validation::validate_lean_code(&lean_code).unwrap_or_else(|e| {
-            panic!(
-                "Generated complete lawful beq should be valid Lean code, but got error: {}",
-                e
-            )
-        });
+        validate_lean_code(&format!(
+            "{}\n{beq_attributes}\n{theorems}\n{instance}",
+            bool_type.to_lean(),
+        ))
+        .unwrap_or_else(|e| panic!("MyBool with LawfulBEq Lean validation failed: {}", e));
     }
 
     #[test]
@@ -876,90 +882,70 @@ mod tests {
             attributes: vec!["grind".to_string()],
         };
 
-        // Verify theorem generation
-        let theorems = ilist_type.generate_beq_theorems();
-        // Should have theorems for Nil-Nil, Nil-Cons, Cons-Nil, Cons-Cons
-        assert!(theorems.contains("beq_nil_nil"));
-        assert!(theorems.contains("beq_nil_cons"));
-        assert!(theorems.contains("beq_cons_nil"));
-        assert!(theorems.contains("beq_cons_cons"));
-        // Cons-Cons should have parameter checking
-        assert!(theorems.contains("x0 == y0"));
-
-        // Verify instance structure
-        let instance = ilist_type.generate_lawful_beq_instance();
-        assert!(instance.contains("instance : LawfulBEq ilist"));
-        assert!(instance.contains("induction a generalizing b with"));
-        assert!(instance.contains("| Nil => grind"));
-        assert!(instance.contains("| Cons x0 x1 => grind"));
-
-        // Validate complete lawful beq (theorems + instance) with Lean code
-        let complete = ilist_type.generate_complete_lawful_beq();
-        let lean_code = crate::lean_backend::LeanContextBuilder::new()
-            .with_nodes(vec![AstNode::TypeDeclaration(ilist_type)])
-            .with_type_theorems("ilist", complete)
-            .build();
-        crate::lean_validation::validate_lean_code(&lean_code).unwrap_or_else(|e| {
-            panic!(
-                "Generated complete lawful beq should be valid Lean code, but got error: {}",
-                e
-            )
-        });
-    }
-
-    #[test]
-    fn test_output_ilist() {
-        let ilist_type = TypeDecl {
-            name: "ilist".to_string(),
-            variants: vec![
-                Variant {
-                    name: "Nil".to_string(),
-                    fields: vec![],
-                },
-                Variant {
-                    name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
-                },
-            ],
-            attributes: vec![],
-        };
+        let beq_attributes = ilist_type.generate_beq_attribute();
+        let expected_attribtues =
+            "attribute [simp, grind =] BEq.beq instBEqIlist.beq Bool.and_assoc";
+        assert_eq!(beq_attributes, expected_attribtues);
 
         let beq_theorems = ilist_type.generate_beq_theorems();
-        let expected_beq = "@[simp, grind =] theorem ilist.beq_nil_nil : (ilist.Nil == ilist.Nil) = true := rfl\n\
-                            @[simp, grind =] theorem ilist.beq_nil_cons : (ilist.Nil == ilist.Cons y0 y1) = false := rfl\n\
-                            @[simp, grind =] theorem ilist.beq_cons_nil : (ilist.Cons x0 x1 == ilist.Nil) = false := rfl\n\
-                            @[simp, grind =] theorem ilist.beq_cons_cons :\n  (ilist.Cons x0 x1 == ilist.Cons y0 y1) = (x0 == y0 && x1 == y1) := rfl";
+        let expected_beq = "@[simp, grind =] theorem ilist.beq_nil_nil : (ilist.Nil == ilist.Nil) = true := by\n  simp\n\
+                            @[simp, grind =] theorem ilist.beq_nil_cons : (ilist.Nil == ilist.Cons y0 y1) = false := by\n  simp\n\
+                            @[simp, grind =] theorem ilist.beq_cons_nil : (ilist.Cons x0 x1 == ilist.Nil) = false := by\n  simp\n\
+                            @[simp, grind =] theorem ilist.beq_cons_cons :\n  (ilist.Cons x0 x1 == ilist.Cons y0 y1) = (x0 == y0 && x1 == y1) := by\n  simp";
         assert_eq!(beq_theorems, expected_beq);
 
         let lawful_beq = ilist_type.generate_lawful_beq_instance();
         let expected_lawful = "@[grind ., simp]\ninstance : LawfulBEq ilist where\n  eq_of_beq {a b} h := by\n    induction a generalizing b with\n    | Nil => grind\n    | Cons x0 x1 => grind\n  rfl {a} := by\n    induction a with\n    | Nil => grind\n    | Cons x0 x1 ih => grind";
         assert_eq!(lawful_beq, expected_lawful);
+
+        validate_lean_code(&format!(
+            "{}\n{beq_attributes}\n{beq_theorems}\n{lawful_beq}",
+            ilist_type.to_lean(),
+        ))
+        .unwrap_or_else(|e| panic!("ilist with LawfulBEq Lean validation failed: {}", e));
     }
 
     #[test]
-    fn test_complete_lawful_beq() {
-        let ilist_type = TypeDecl {
-            name: "ilist".to_string(),
+    fn test_complete_lawful_beq_tree() {
+        let tree_type = TypeDecl {
+            name: "tree".to_string(),
             variants: vec![
                 Variant {
-                    name: "Nil".to_string(),
+                    name: "Leaf".to_string(),
                     fields: vec![],
                 },
                 Variant {
-                    name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
+                    name: "Node".to_string(),
+                    fields: vec![
+                        Type::Int,
+                        Type::Named("tree".to_string()),
+                        Type::Named("tree".to_string()),
+                    ],
                 },
             ],
-            attributes: vec![],
+            attributes: vec!["grind".to_string()],
         };
 
-        let complete = ilist_type.generate_complete_lawful_beq();
-        let expected_complete = "@[simp, grind =] theorem ilist.beq_nil_nil : (ilist.Nil == ilist.Nil) = true := rfl\n\
-                                 @[simp, grind =] theorem ilist.beq_nil_cons : (ilist.Nil == ilist.Cons y0 y1) = false := rfl\n\
-                                 @[simp, grind =] theorem ilist.beq_cons_nil : (ilist.Cons x0 x1 == ilist.Nil) = false := rfl\n\
-                                 @[simp, grind =] theorem ilist.beq_cons_cons :\n  (ilist.Cons x0 x1 == ilist.Cons y0 y1) = (x0 == y0 && x1 == y1) := rfl\n\
-                                 \n\
-                                 @[grind ., simp]\ninstance : LawfulBEq ilist where\n  eq_of_beq {a b} h := by\n    induction a generalizing b with\n    | Nil => grind\n    | Cons x0 x1 => grind\n  rfl {a} := by\n    induction a with\n    | Nil => grind\n    | Cons x0 x1 ih => grind";
-        assert_eq!(complete, expected_complete);
+        let beq_attributes = tree_type.generate_beq_attribute();
+        let expected_attributes =
+            "attribute [simp, grind =] BEq.beq instBEqTree.beq Bool.and_assoc";
+        assert_eq!(beq_attributes, expected_attributes);
+
+        let theorems = tree_type.generate_beq_theorems();
+        let expected_theorems = "@[simp, grind =] theorem tree.beq_leaf_leaf : (tree.Leaf == tree.Leaf) = true := by\n  simp\n\
+                                @[simp, grind =] theorem tree.beq_leaf_node : (tree.Leaf == tree.Node y0 y1 y2) = false := by\n  simp\n\
+                                @[simp, grind =] theorem tree.beq_node_leaf : (tree.Node x0 x1 x2 == tree.Leaf) = false := by\n  simp\n\
+                                @[simp, grind =] theorem tree.beq_node_node :\n  (tree.Node x0 x1 x2 == tree.Node y0 y1 y2) = (x0 == y0 && x1 == y1 && x2 == y2) := by\n  simp";
+        assert_eq!(theorems, expected_theorems);
+
+        let instance = tree_type.generate_lawful_beq_instance();
+        let expected_instance = "@[grind ., simp]\ninstance : LawfulBEq tree where\n  eq_of_beq {a b} h := by\n    induction a generalizing b with\n    | Leaf => grind\n    | Node x0 x1 x2 => grind\n  rfl {a} := by\n    induction a with\n    | Leaf => grind\n    | Node x0 x1 x2 ih => grind";
+        assert_eq!(instance, expected_instance);
+
+        validate_lean_code(&format!(
+            "{}\n{beq_attributes}\n{theorems}\n{instance}",
+            tree_type.to_lean(),
+        ))
+        .unwrap_or_else(|e| panic!("tree with LawfulBEq Lean validation failed: {}", e));
     }
 }

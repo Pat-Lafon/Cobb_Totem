@@ -94,6 +94,42 @@ impl AxiomGenerator {
         }
     }
 
+    /// Extract expressions with their preceding proposition steps and parameters.
+    /// For each argument, returns: the final expression, preceding propositions, and new parameters.
+    fn extract_exprs_with_steps(
+        results_list: Vec<Vec<BodyPropositionData>>,
+    ) -> Result<(Vec<Expression>, Vec<Vec<Proposition>>, Vec<Parameter>), String> {
+        let mut all_exprs = Vec::new();
+        let mut all_preceding_steps = Vec::new();
+        let mut all_params = Vec::new();
+
+        for results in results_list {
+            if results.len() != 1 {
+                return Err(format!(
+                    "Expected exactly one result, got {}",
+                    results.len()
+                ));
+            }
+            let body_data = results.into_iter().next().unwrap();
+
+            let (last_prop, preceding) = body_data
+                .proposition_steps
+                .split_last()
+                .ok_or("Expected at least one proposition step")?;
+
+            match last_prop {
+                Proposition::Expr(e) => {
+                    all_exprs.push(e.clone());
+                    all_preceding_steps.push(preceding.to_vec());
+                    all_params.extend(body_data.additional_parameters);
+                }
+                _ => return Err("Expected final step to be an expression".to_string()),
+            }
+        }
+
+        Ok((all_exprs, all_preceding_steps, all_params))
+    }
+
     /// Extract all variables introduced by a pattern
     fn vars_from_pattern(&self, pattern: &crate::prog_ir::Pattern) -> Vec<(VarName, Type)> {
         match pattern {
@@ -202,31 +238,24 @@ impl AxiomGenerator {
                 }]
             }
             crate::prog_ir::Expression::BinaryOp(expression, binary_op, expression1) => {
-                let left = self.from_expression(&expression);
-                let right = self.from_expression(&expression1);
-                assert!(
-                    left.len() == 1 && right.len() == 1,
-                    "unimplemented for other cases"
-                );
-                let left_data = left.into_iter().next().unwrap();
-                let right_data = right.into_iter().next().unwrap();
+                let (exprs, preceding_steps_list, params) = Self::extract_exprs_with_steps(vec![
+                    self.from_expression(&expression),
+                    self.from_expression(&expression1),
+                ])
+                .unwrap_or_else(|e| panic!("BinaryOp operand: {}", e));
 
-                let (left_prop, left_rest) = left_data.proposition_steps.split_last().unwrap();
-                let (right_prop, right_rest) = right_data.proposition_steps.split_last().unwrap();
+                assert_eq!(exprs.len(), 2, "BinaryOp requires exactly 2 expressions");
 
-                let mut proposition_steps = left_rest.to_vec();
-                proposition_steps.extend_from_slice(right_rest);
+                let mut proposition_steps = preceding_steps_list.concat();
                 proposition_steps.push(Proposition::Expr(Expression::BinaryOp(
-                    Box::new(left_prop.as_expr().clone()),
+                    Box::new(exprs[0].clone()),
                     *binary_op,
-                    Box::new(right_prop.as_expr().clone()),
+                    Box::new(exprs[1].clone()),
                 )));
-                let mut additional_parameters = left_data.additional_parameters;
-                additional_parameters.extend(right_data.additional_parameters);
 
                 vec![BodyPropositionData {
                     proposition_steps,
-                    additional_parameters,
+                    additional_parameters: params,
                 }]
             }
             crate::prog_ir::Expression::Application(func_expr, arg_exprs) => {
@@ -238,13 +267,15 @@ impl AxiomGenerator {
                     _ => panic!("Not sure yet"),
                 };
 
-                let mut converted_args: Vec<_> = arg_exprs
-                    .iter()
-                    .map(|expr| {
-                        Self::extract_single_expr(self.from_expression(expr))
-                            .unwrap_or_else(|e| panic!("Application argument: {}", e))
-                    })
-                    .collect();
+                // Create a wrapper predicate with an existential parameter for function applications
+                let (mut converted_args, preceding_steps_per_arg, arg_params) =
+                    Self::extract_exprs_with_steps(
+                        arg_exprs
+                            .iter()
+                            .map(|expr| self.from_expression(expr))
+                            .collect(),
+                    )
+                    .unwrap_or_else(|e| panic!("Application argument: {}", e));
 
                 let exists_var = self.next_var();
                 let existential = Expression::Variable(exists_var.clone());
@@ -252,21 +283,25 @@ impl AxiomGenerator {
                 let func_name_wrapper = format!("{func_name}_wrapper");
                 converted_args.push(existential.clone());
 
+                // Flatten all preceding steps from arguments
+                let mut proposition_steps = preceding_steps_per_arg.concat();
+                proposition_steps.push(Proposition::Predicate(func_name_wrapper, converted_args));
+                proposition_steps.push(Proposition::Expr(existential.clone()));
+
                 // Look up the function's return type if available
                 let func_return_type = self.get_function_type(&func_name).cloned();
 
+                let mut all_params = arg_params;
+                all_params.push(Parameter {
+                    name: exists_var,
+                    typ: func_return_type
+                        .unwrap_or_else(|| panic!("Function '{}' type not registered", func_name)),
+                    quantifier: Quantifier::Existential,
+                });
+
                 vec![BodyPropositionData {
-                    proposition_steps: vec![
-                        Proposition::Predicate(func_name_wrapper, converted_args),
-                        Proposition::Expr(existential),
-                    ],
-                    additional_parameters: vec![Parameter {
-                        name: exists_var,
-                        typ: func_return_type.unwrap_or_else(|| {
-                            panic!("Function '{}' type not registered", func_name)
-                        }),
-                        quantifier: Quantifier::Existential,
-                    }],
+                    proposition_steps,
+                    additional_parameters: all_params,
                 }]
             }
             crate::prog_ir::Expression::Match(scrutinee, cases) => {
@@ -318,6 +353,36 @@ impl AxiomGenerator {
                 }
                 results
             }
+            crate::prog_ir::Expression::IfThenElse {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                // Extract condition, then, and else branches with their preceding steps
+                let (exprs, preceding_steps_list, params) = Self::extract_exprs_with_steps(vec![
+                    self.from_expression(condition),
+                    self.from_expression(then_branch),
+                    self.from_expression(else_branch),
+                ])
+                .unwrap_or_else(|e| panic!("IfThenElse expression: {}", e));
+
+                assert_eq!(exprs.len(), 3, "IfThenElse requires exactly 3 expressions");
+
+                // Flatten all preceding steps from all three branches
+                let mut all_steps = preceding_steps_list.concat();
+
+                // Add the final IfThenElse expression
+                all_steps.push(Proposition::Expr(Expression::IfThenElse {
+                    condition: Box::new(exprs[0].clone()),
+                    then_branch: Box::new(exprs[1].clone()),
+                    else_branch: Box::new(exprs[2].clone()),
+                }));
+
+                vec![BodyPropositionData {
+                    proposition_steps: all_steps,
+                    additional_parameters: params,
+                }]
+            }
             crate::prog_ir::Expression::Tuple(_expressions) => todo!(),
         }
     }
@@ -330,7 +395,6 @@ mod tests {
     use super::*;
     use crate::ocamlparser::OcamlParser;
     use crate::prog_ir::{AstNode, LetBinding};
-    use crate::spec_ir::create_ilist_type;
     use crate::{ToLean, VarName};
 
     /// Helper: parse program, extract type and function definitions
@@ -361,7 +425,17 @@ mod tests {
     fn generate_axioms_for(program_str: &str, func_name: &str) -> Vec<Vec<Proposition>> {
         let parsed_nodes = parse_program(program_str);
         let function = find_function(&parsed_nodes, func_name);
-        let mut generator = AxiomGenerator::new(vec![create_ilist_type()]);
+
+        // Extract all type declarations from parsed program
+        let type_decls: Vec<TypeDecl> = parsed_nodes
+            .iter()
+            .filter_map(|node| match node {
+                AstNode::TypeDeclaration(type_decl) => Some(type_decl.clone()),
+                _ => None,
+            })
+            .collect();
+
+        let mut generator = AxiomGenerator::new(type_decls);
 
         let builder = generator
             .prepare_function(&function)
@@ -488,6 +562,34 @@ mod tests {
                 "(xs = (.Cons y ys))",
                 "(sorted_wrapper xs res_0)",
                 "(((x ≤ y) ∧ res_0) = res)"
+            ]
+        );
+    }
+
+    #[test]
+    fn test_tree_height_function() {
+        // Test tree height function with binary tree structure
+        let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
+
+        let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)";
+        let props = generate_axioms_for(program_str, "height");
+
+        // Base case: Leaf -> 0
+        assert_eq!(
+            props[0].iter().map(|p| p.to_lean()).collect_vec(),
+            vec!["(t = .Leaf)", "(0 = res)"]
+        );
+
+        // Recursive case: Node with height computation
+        assert_eq!(
+            props[1].iter().map(|p| p.to_lean()).collect_vec(),
+            vec![
+                "(t = (.Node v l r))",
+                "(height_wrapper l res_0)",
+                "(height_wrapper r res_1)",
+                "(height_wrapper l res_2)",
+                "(height_wrapper r res_3)",
+                "((1 + (ite (res_0 > res_1) res_2 res_3)) = res)"
             ]
         );
     }

@@ -119,6 +119,18 @@ impl ToLean for Expression {
                     )
                 }
             }
+            Expression::IfThenElse {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                format!(
+                    "(ite ({}) ({}) ({}))",
+                    condition.to_lean(),
+                    then_branch.to_lean(),
+                    else_branch.to_lean()
+                )
+            }
         }
     }
 }
@@ -349,8 +361,7 @@ mod tests {
 
     #[test]
     fn test_ilist_with_lawful_beq() {
-        let mut ilist_type = spec_ir::create_ilist_type();
-        ilist_type.attributes = vec!["grind".to_string()];
+        let ilist_type = spec_ir::create_ilist_type();
 
         let inductive_def = ilist_type.to_lean();
         let lawful_support = ilist_type.generate_complete_lawful_beq();
@@ -359,5 +370,97 @@ mod tests {
         // Verify the code validates
         validate_lean_code(&full_code)
             .unwrap_or_else(|e| panic!("Generated LawfulBEq code failed validation: {}", e));
+    }
+
+    #[test]
+    fn test_context_builder_with_ilist_and_functions() {
+        let ilist_type = spec_ir::create_ilist_type();
+
+        let len_function = LetBinding {
+            name: VarName::new("len"),
+            is_recursive: true,
+            params: vec![
+                (VarName::new("l"), Type::Named("ilist".to_string())),
+                (VarName::new("n"), Type::Int),
+            ],
+            return_type: Some(Type::Bool),
+            body: Expression::Match(
+                Box::new(Expression::Variable("l".into())),
+                vec![
+                    (
+                        Pattern::Constructor(ConstructorName::Simple("Nil".to_string()), vec![]),
+                        Expression::BinaryOp(
+                            Box::new(Expression::Variable("n".into())),
+                            BinaryOp::Eq,
+                            Box::new(Expression::Literal(Literal::Int(0))),
+                        ),
+                    ),
+                    (
+                        Pattern::Constructor(
+                            ConstructorName::Simple("Cons".to_string()),
+                            vec![Pattern::Wildcard, Pattern::Variable("rest".into())],
+                        ),
+                        Expression::Application(
+                            Box::new(Expression::Variable("len".into())),
+                            vec![
+                                Expression::Variable("rest".into()),
+                                Expression::BinaryOp(
+                                    Box::new(Expression::Variable("n".into())),
+                                    BinaryOp::Sub,
+                                    Box::new(Expression::Literal(Literal::Int(1))),
+                                ),
+                            ],
+                        ),
+                    ),
+                ],
+            ),
+            attributes: Vec::new(),
+        };
+
+        let builder = LeanContextBuilder::new().with_nodes(vec![
+            AstNode::TypeDeclaration(ilist_type.clone()),
+            AstNode::LetBinding(len_function),
+        ]);
+
+        let lean_code = builder.build();
+
+        // Verify the generated code validates
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Context builder generated code failed validation: {}", e));
+    }
+
+    #[test]
+    fn test_context_builder_with_multiple_types() {
+        let ilist_type = spec_ir::create_ilist_type();
+
+        let tree_type = TypeDecl {
+            name: "tree".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Leaf".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "Node".to_string(),
+                    fields: vec![
+                        Type::Int,
+                        Type::Named("tree".to_string()),
+                        Type::Named("tree".to_string()),
+                    ],
+                },
+            ],
+            attributes: vec!["grind".to_string()],
+        };
+
+        let builder = LeanContextBuilder::new().with_nodes(vec![
+            AstNode::TypeDeclaration(ilist_type),
+            AstNode::TypeDeclaration(tree_type),
+        ]);
+
+        let lean_code = builder.build();
+
+        // Verify the generated code validates
+        validate_lean_code(&lean_code)
+            .unwrap_or_else(|e| panic!("Multiple types code failed validation: {}", e));
     }
 }

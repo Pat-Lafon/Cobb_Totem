@@ -15,40 +15,54 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     | Nil -> true
     | Cons (y, ys) -> (x <= y) && sorted xs"; */
 
-    let program_str = "
+    /* let program_str = "
     type [@grind] ilist = Nil | Cons of int * ilist\n
 
     let [@simp] [@grind] rec len (l : ilist) : int =
     match l with
     | Nil -> 0
-    | Cons (x, xs) -> 1 + len xs";
+    | Cons (x, xs) -> 1 + len xs"; */
+
+    /*     let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
+
+    let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)"; */
+
+    let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
+
+    let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)
+
+    let rec complete (t : tree) : bool =
+  match t with
+  | Leaf -> true
+  | Node (_, l, r) -> complete l && complete r && height l = height r";
 
     let mut parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
-    assert_eq!(
+/*     assert_eq!(
         parsed_nodes.len(),
         2,
         "Expected exactly two nodes (type + function)"
-    );
+    ); */
 
-    let ilist_type = parsed_nodes
+    let data_type = parsed_nodes
         .iter()
         .find_map(|node| match node {
             AstNode::TypeDeclaration(type_decl) => Some(type_decl.clone()),
             _ => None,
         })
-        .expect("Expected to find ilist type declaration");
+        .expect("Expected to find tree type declaration");
 
-    let sorted_function = parsed_nodes
+    let height_function = parsed_nodes
         .iter()
+        .rev()
         .find_map(|node| match node {
             AstNode::LetBinding(binding) => Some(binding.clone()),
             _ => None,
         })
-        .expect("Expected to find sorted function binding");
+        .expect("Expected to find height function binding");
 
-    let mut generator = AxiomGenerator::new(vec![ilist_type.clone()]);
+    let mut generator = AxiomGenerator::new(vec![data_type.clone()]);
     let mut builder = generator
-        .prepare_function(&sorted_function)?
+        .prepare_function(&height_function)?
         .with_proof(|a| a.suggest_proof_tactic());
 
     let wrapper_binding = builder.create_wrapper();
@@ -61,19 +75,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("{}", axiom.to_lean());
     }
 
-    /* todo add display */
-    /* Use a typical form for length functions and transform */
-    /* Consider variations that include existentials */
-    /* Work on the reverse direction */
-    /* Alternative proof structures */
-    /* Weakest postcondition connection? */
-    /* Relational encoding phrase */
-
     // Validate generated theorems through Lean backend
     let lean_code = LeanContextBuilder::new()
         .with_nodes(parsed_nodes)
         .with_axioms(axioms)
-        .with_type_theorems("ilist", ilist_type.generate_complete_lawful_beq())
+        .with_type_theorems(&data_type.name, data_type.generate_complete_lawful_beq())
         .build();
 
     println!("\nLean Code:\n{lean_code}");

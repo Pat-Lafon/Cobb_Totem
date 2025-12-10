@@ -696,13 +696,32 @@ impl OcamlParser {
                 };
                 Expression::Constructor(name, flattened_args)
             }
-            Expression::Variable(_) | Expression::Application(_, _) | Expression::Match(_, _) => {
+            Expression::Variable(ref name) => {
+                // Special handling for ite as a variable being applied
+                if name.as_str() == "ite" {
+                    assert_eq!(
+                        args.len(),
+                        3,
+                        "ite requires exactly 3 arguments, got {}",
+                        args.len()
+                    );
+                    Expression::IfThenElse {
+                        condition: Box::new(args[0].clone()),
+                        then_branch: Box::new(args[1].clone()),
+                        else_branch: Box::new(args[2].clone()),
+                    }
+                } else {
+                    Expression::Application(Box::new(func), args)
+                }
+            }
+            Expression::Application(_, _) | Expression::Match(_, _) => {
                 Expression::Application(Box::new(func), args)
             }
             Expression::Literal(_)
             | Expression::UnaryOp(_, _)
             | Expression::BinaryOp(_, _, _)
-            | Expression::Tuple(_) => {
+            | Expression::Tuple(_)
+            | Expression::IfThenElse { .. } => {
                 panic!("Cannot apply non-function expression as a function")
             }
         }
@@ -1636,4 +1655,82 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest)
         assert_parse(source, expected);
     }
 
+    #[test]
+    fn test_parse_ite_as_variable_application() {
+        // Test ite parsed as variable being applied (from tree example)
+        assert_parse(
+            "let[@simp] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)",
+            vec![let_binding_rec(
+                "height",
+                vec!["simp"],
+                vec![("t", Type::Named("tree".to_string()))],
+                Some(Type::Int),
+                Expression::Match(
+                    Box::new(Expression::Variable("t".into())),
+                    vec![
+                        (
+                            Pattern::Constructor(
+                                ConstructorName::Simple("Leaf".to_string()),
+                                vec![],
+                            ),
+                            Expression::Literal(Literal::Int(0)),
+                        ),
+                        (
+                            Pattern::Constructor(
+                                ConstructorName::Simple("Node".to_string()),
+                                vec![
+                                    Pattern::Variable("v".into()),
+                                    Pattern::Variable("l".into()),
+                                    Pattern::Variable("r".into()),
+                                ],
+                            ),
+                            Expression::BinaryOp(
+                                Box::new(Expression::Literal(Literal::Int(1))),
+                                BinaryOp::Add,
+                                Box::new(Expression::IfThenElse {
+                                    condition: Box::new(Expression::BinaryOp(
+                                        Box::new(Expression::Application(
+                                            Box::new(Expression::Variable("height".into())),
+                                            vec![Expression::Variable("l".into())],
+                                        )),
+                                        BinaryOp::Gt,
+                                        Box::new(Expression::Application(
+                                            Box::new(Expression::Variable("height".into())),
+                                            vec![Expression::Variable("r".into())],
+                                        )),
+                                    )),
+                                    then_branch: Box::new(Expression::Application(
+                                        Box::new(Expression::Variable("height".into())),
+                                        vec![Expression::Variable("l".into())],
+                                    )),
+                                    else_branch: Box::new(Expression::Application(
+                                        Box::new(Expression::Variable("height".into())),
+                                        vec![Expression::Variable("r".into())],
+                                    )),
+                                }),
+                            ),
+                        ),
+                    ],
+                ),
+            )],
+        );
+    }
+
+    #[test]
+    fn test_parse_ite_as_constructor() {
+        // Test ite parsed as constructor with arguments
+        assert_parse(
+            "let test = ite true 1 2",
+            vec![let_binding(
+                "test",
+                vec![],
+                None,
+                Expression::IfThenElse {
+                    condition: Box::new(Expression::Literal(Literal::Bool(true))),
+                    then_branch: Box::new(Expression::Literal(Literal::Int(1))),
+                    else_branch: Box::new(Expression::Literal(Literal::Int(2))),
+                },
+            )],
+        );
+    }
 }

@@ -84,6 +84,13 @@ pub enum Expression {
 
     /// Constructor application: .Cons x .Nil
     Constructor(ConstructorName, Vec<Expression>),
+
+    /// If-then-else expression: ite cond then_expr else_expr
+    IfThenElse {
+        condition: Box<Expression>,
+        then_branch: Box<Expression>,
+        else_branch: Box<Expression>,
+    },
 }
 
 impl Parameter {
@@ -129,17 +136,27 @@ impl Axiom {
     /// Suggests an appropriate proof tactic based on axiom characteristics.
     /// Uses "aesop" for axioms with existential quantifiers, "grind" otherwise.
     pub fn suggest_proof_tactic(&self) -> String {
-        if self
+        // Count existential quantifiers
+        let existential_count = self
             .params
             .iter()
-            .find(|p| p.quantifier == Quantifier::Existential)
-            .is_some()
-        {
-            "\ntry aesop (config := { maxRuleHeartbeats := 20000 })
+            .filter(|p| p.quantifier == Quantifier::Existential)
+            .count();
+
+        if existential_count > 0 {
+            let mut tactic = "\ntry aesop (config := { maxRuleHeartbeats := 20000 })
 intros
-refine ⟨?_, ?_⟩ <;> aesop
 "
-            .to_string()
+            .to_string();
+
+            // Generate refine/rotate_left pairs for each existential
+            for _ in 0..existential_count {
+                tactic.push_str("refine ⟨?_, ?_⟩\nrotate_left\n");
+            }
+
+            tactic.push_str("all_goals try grind\nall_goals try aesop\n");
+
+            tactic
         } else {
             "grind".to_string()
         }
@@ -357,6 +374,13 @@ impl fmt::Display for Expression {
                     write!(f, "(.{} {})", name, args_str)
                 }
             }
+            Expression::IfThenElse {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                write!(f, "(ite {} {} {})", condition, then_branch, else_branch)
+            }
         }
     }
 }
@@ -373,16 +397,29 @@ impl ToLean for Expression {
                 format!("{}({})", op.to_lean(), expr.to_lean())
             }
             Expression::Constructor(name, args) => {
+                let name_str = format!(".{}", name);
                 if args.is_empty() {
-                    format!(".{}", name)
+                    name_str
                 } else {
                     let args_str = args
                         .iter()
                         .map(|arg| arg.to_lean())
                         .collect::<Vec<_>>()
                         .join(" ");
-                    format!("(.{} {})", name, args_str)
+                    format!("({} {})", name_str, args_str)
                 }
+            }
+            Expression::IfThenElse {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                format!(
+                    "(ite {} {} {})",
+                    condition.to_lean(),
+                    then_branch.to_lean(),
+                    else_branch.to_lean()
+                )
             }
         }
     }
