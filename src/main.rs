@@ -31,7 +31,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)
 
-    let rec complete (t : tree) : bool =
+    let [@simp] [@grind] rec complete (t : tree) : bool =
   match t with
   | Leaf -> true
   | Node (_, l, r) -> complete l && complete r && height l = height r";

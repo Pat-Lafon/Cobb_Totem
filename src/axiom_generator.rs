@@ -2,7 +2,7 @@ use crate::VarName;
 use crate::axiom_builder_state::{AxiomBuilderState, BodyPropositionData};
 use crate::create_wrapper::RESULT_PARAM;
 use crate::prog_ir::{LetBinding, Type, TypeDecl};
-use crate::spec_ir::{Expression, Parameter, Proposition, Quantifier};
+use crate::spec_ir::{Expression, Parameter, Proposition};
 
 /// Generates axioms in the spec IR from parsed program IR functions.
 #[derive(Clone)]
@@ -374,67 +374,14 @@ impl AxiomGenerator {
 mod tests {
     use itertools::Itertools as _;
 
-    use super::*;
-    use crate::ocamlparser::OcamlParser;
-    use crate::prog_ir::{AstNode, LetBinding};
-    use crate::{ToLean, VarName};
-
-    /// Helper: parse program, extract type and function definitions
-    fn parse_program(program_str: &str) -> Vec<AstNode> {
-        let nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
-        assert_eq!(
-            nodes.len(),
-            2,
-            "Expected exactly two nodes (type + function)"
-        );
-        nodes
-    }
-
-    /// Helper: find a function binding by name
-    fn find_function(nodes: &[AstNode], name: &str) -> LetBinding {
-        nodes
-            .iter()
-            .find_map(|node| match node {
-                AstNode::LetBinding(binding) if binding.name == VarName::new(name) => {
-                    Some(binding.clone())
-                }
-                _ => None,
-            })
-            .expect(&format!("Expected to find {} function binding", name))
-    }
-
-    /// Helper: generate axioms from a program string and function name
-    fn generate_axioms_for(program_str: &str, func_name: &str) -> Vec<Vec<Proposition>> {
-        let parsed_nodes = parse_program(program_str);
-        let function = find_function(&parsed_nodes, func_name);
-
-        // Extract all type declarations from parsed program
-        let type_decls: Vec<TypeDecl> = parsed_nodes
-            .iter()
-            .filter_map(|node| match node {
-                AstNode::TypeDeclaration(type_decl) => Some(type_decl.clone()),
-                _ => None,
-            })
-            .collect();
-
-        let mut generator = AxiomGenerator::new(type_decls);
-
-        let builder = generator
-            .prepare_function(&function)
-            .expect("Failed to prepare function");
-        builder
-            .body_propositions
-            .iter()
-            .map(|axiom| axiom.proposition_steps.clone())
-            .collect()
-    }
+    use crate::{ToLean, test_helpers};
 
     #[test]
     fn test_and_predicate_with_non_comparison() {
         // Test AND with an expression and a predicate: should create res_0 ∧ expr, not expr + res_0
         // Using a boolean function that returns true and ANDs with a recursive call
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec all_positive (l : ilist) : bool = match l with | Nil -> true | Cons (h, t) -> (h > 0) && all_positive t";
-        let props = generate_axioms_for(program_str, "all_positive");
+        let props = test_helpers::generate_axioms_for(program_str, "all_positive");
 
         assert_eq!(
             props[0].iter().map(|p| p.to_lean()).collect_vec(),
@@ -456,7 +403,7 @@ mod tests {
         // Test OR with a comparison and a predicate: should create expr ∨ res_0
         // Using the mem function which ORs a comparison with a recursive call
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t";
-        let props = generate_axioms_for(program_str, "mem");
+        let props = test_helpers::generate_axioms_for(program_str, "mem");
 
         assert_eq!(
             props[0].iter().map(|p| p.to_lean()).collect_vec(),
@@ -478,7 +425,7 @@ mod tests {
         // Test AND where both sides involve predicates: all_eq uses AND with predicate
         // all_eq t x: (h = x) && all_eq t x
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons (h, t) -> (h = x) && all_eq t x";
-        let props = generate_axioms_for(program_str, "all_eq");
+        let props = test_helpers::generate_axioms_for(program_str, "all_eq");
 
         assert_eq!(
             props[0].iter().map(|p| p.to_lean()).collect_vec(),
@@ -500,7 +447,7 @@ mod tests {
         // Test arithmetic operation with a predicate: len uses 1 + recursive call
         // Tests that arithmetic expressions wrap the predicate result properly
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (x, xs) -> 1 + len xs";
-        let props = generate_axioms_for(program_str, "len");
+        let props = test_helpers::generate_axioms_for(program_str, "len");
 
         assert_eq!(
             props[0].iter().map(|p| p.to_lean()).collect_vec(),
@@ -522,7 +469,7 @@ mod tests {
         // Test nested match with AND: sorted has nested matches with AND in innermost branch
         // Pattern: outer match on l, inner match on xs, result has (x <= y) && sorted xs
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (x, xs) -> match xs with | Nil -> true | Cons (y, ys) -> (x <= y) && sorted xs";
-        let props = generate_axioms_for(program_str, "sorted");
+        let props = test_helpers::generate_axioms_for(program_str, "sorted");
 
         // Base case: l = Nil -> true
         assert_eq!(
@@ -554,7 +501,7 @@ mod tests {
         let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
 
         let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)";
-        let props = generate_axioms_for(program_str, "height");
+        let props = test_helpers::generate_axioms_for(program_str, "height");
 
         // Base case: Leaf -> 0
         assert_eq!(

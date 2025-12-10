@@ -84,3 +84,108 @@ impl ToLean for Literal {
         }
     }
 }
+
+/// Test utilities for parsing and generating axioms
+#[cfg(test)]
+mod test_helpers {
+    use crate::axiom_generator::AxiomGenerator;
+    use crate::ocamlparser::OcamlParser;
+    use crate::prog_ir::{AstNode, LetBinding, TypeDecl};
+    use crate::spec_ir::{Axiom, Proposition};
+    use crate::VarName;
+
+    /// Parse program string and extract type and function definitions
+    pub fn parse_program(program_str: &str) -> Vec<AstNode> {
+        let nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
+        assert_eq!(
+            nodes.len(),
+            2,
+            "Expected exactly two nodes (type + function)"
+        );
+        nodes
+    }
+
+    /// Find a function binding by name in a list of AST nodes
+    pub fn find_function(nodes: &[AstNode], name: &str) -> LetBinding {
+        nodes
+            .iter()
+            .find_map(|node| match node {
+                AstNode::LetBinding(binding) if binding.name == VarName::new(name) => {
+                    Some(binding.clone())
+                }
+                _ => None,
+            })
+            .expect(&format!("Expected to find {} function binding", name))
+    }
+
+    /// Extract type declarations from parsed nodes
+    pub fn extract_type_decls(nodes: &[AstNode]) -> Vec<TypeDecl> {
+        nodes
+            .iter()
+            .filter_map(|node| match node {
+                AstNode::TypeDeclaration(type_decl) => Some(type_decl.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Generate axiom proposition steps from a program string and function name
+    pub fn generate_axioms_for(program_str: &str, func_name: &str) -> Vec<Vec<Proposition>> {
+        let parsed_nodes = parse_program(program_str);
+        let function = find_function(&parsed_nodes, func_name);
+        let type_decls = extract_type_decls(&parsed_nodes);
+
+        let mut generator = AxiomGenerator::new(type_decls);
+
+        let builder = generator
+            .prepare_function(&function)
+            .expect("Failed to prepare function");
+        builder
+            .body_propositions
+            .iter()
+            .map(|axiom| axiom.proposition_steps.clone())
+            .collect()
+    }
+
+    /// Generate complete axioms with wrapper from a program string and function name
+    pub fn generate_axioms_with_wrapper(
+        program_str: &str,
+        func_name: &str,
+    ) -> (Vec<AstNode>, Vec<crate::spec_ir::Axiom>, LetBinding) {
+        use crate::axiom_generator::AxiomGenerator;
+
+        let parsed_nodes = parse_program(program_str);
+        let function = find_function(&parsed_nodes, func_name);
+        let type_constructors = extract_type_decls(&parsed_nodes);
+
+        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut builder = generator
+            .prepare_function(&function)
+            .expect("Failed to prepare function");
+        let wrapper = builder.create_wrapper();
+        let axioms = builder
+            .with_proof(|a| a.suggest_proof_tactic())
+            .build_both()
+            .expect("Failed to generate axioms");
+        (parsed_nodes, axioms, wrapper)
+    }
+
+    /// Validate generated axioms through Lean backend
+    pub fn validate_axioms(parsed_nodes: Vec<AstNode>, axioms: Vec<Axiom>) {
+        use crate::lean_backend::LeanContextBuilder;
+        use crate::lean_validation::validate_lean_code;
+
+        let mut builder = LeanContextBuilder::new();
+        for type_decl in extract_type_decls(&parsed_nodes) {
+            let theorems = type_decl.generate_complete_lawful_beq();
+            builder = builder.with_type_theorems(&type_decl.name, theorems);
+        }
+
+        let lean_code = builder.with_nodes(parsed_nodes).with_axioms(axioms).build();
+
+        validate_lean_code(&lean_code).unwrap_or_else(|e| {
+            eprintln!("Generated Lean code:\n{}", lean_code);
+            panic!("Generated axioms failed Lean validation:\n{}", e)
+        });
+    }
+}

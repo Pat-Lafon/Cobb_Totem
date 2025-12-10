@@ -229,86 +229,9 @@ impl AxiomBuilderState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::ToLean;
-    use crate::VarName;
-    use crate::axiom_generator::AxiomGenerator;
-    use crate::lean_backend::LeanContextBuilder;
-    use crate::lean_validation::validate_lean_code;
-    use crate::ocamlparser::OcamlParser;
-    use crate::prog_ir::{AstNode, LetBinding};
-
-    /// Helper: parse program, extract type and function definitions
-    fn parse_program(program_str: &str) -> Vec<AstNode> {
-        let nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
-        assert_eq!(
-            nodes.len(),
-            2,
-            "Expected exactly two nodes (type + function)"
-        );
-        nodes
-    }
-
-    /// Helper: find a function binding by name
-    fn find_function(nodes: &[AstNode], name: &str) -> LetBinding {
-        nodes
-            .iter()
-            .find_map(|node| match node {
-                AstNode::LetBinding(binding) if binding.name == VarName::new(name) => {
-                    Some(binding.clone())
-                }
-                _ => None,
-            })
-            .expect(&format!("Expected to find {} function binding", name))
-    }
-
-    /// Helper: validate generated axioms through Lean backend
-    fn validate_axioms(parsed_nodes: Vec<AstNode>, axioms: Vec<Axiom>) {
-        // Extract type theorems from type declarations
-        let mut builder = LeanContextBuilder::new();
-        for node in &parsed_nodes {
-            if let AstNode::TypeDeclaration(type_decl) = node {
-                let theorems = type_decl.generate_complete_lawful_beq();
-                builder = builder.with_type_theorems(&type_decl.name, theorems);
-            }
-        }
-
-        let lean_code = builder.with_nodes(parsed_nodes).with_axioms(axioms).build();
-
-        validate_lean_code(&lean_code).unwrap_or_else(|e| {
-            eprintln!("Generated Lean code:\n{}", lean_code);
-            panic!("Generated axioms failed Lean validation:\n{}", e)
-        });
-    }
-
-    /// Helper: generate axioms from a program string and function name
-    fn generate_axioms_for(
-        program_str: &str,
-        func_name: &str,
-    ) -> (Vec<AstNode>, Vec<Axiom>, LetBinding) {
-        let parsed_nodes = parse_program(program_str);
-        let function = find_function(&parsed_nodes, func_name);
-
-        // Extract type declarations from parsed nodes
-        let type_constructors: Vec<_> = parsed_nodes
-            .iter()
-            .filter_map(|node| match node {
-                AstNode::TypeDeclaration(type_decl) => Some(type_decl.clone()),
-                _ => None,
-            })
-            .collect();
-
-        let mut generator = AxiomGenerator::new(type_constructors);
-        let mut builder = generator
-            .prepare_function(&function)
-            .expect("Failed to prepare function");
-        let wrapper = builder.create_wrapper();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build_both()
-            .expect("Failed to generate axioms");
-        (parsed_nodes, axioms, wrapper)
-    }
+    use crate::test_helpers;
+    use crate::prog_ir::AstNode;
 
     #[test]
     fn test_generate_axioms_from_length_function() {
@@ -320,25 +243,25 @@ mod tests {
     | Nil -> 0
     | Cons (x, xs) -> 1 + len xs";
 
-        let (mut parsed_nodes, axioms, wrapper) = generate_axioms_for(program_str, "len");
+        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "len");
         assert_eq!(axioms.len(), 4);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
-        validate_axioms(parsed_nodes, axioms);
+        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
     fn test_generate_axioms_from_sorted_function() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (x, xs) -> match xs with | Nil -> true | Cons (y, ys) -> (x <= y) && sorted xs";
-        let (mut parsed_nodes, axioms, wrapper) = generate_axioms_for(program_str, "sorted");
+        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "sorted");
         assert_eq!(axioms.len(), 6);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
-        validate_axioms(parsed_nodes, axioms);
+        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
     fn test_sorted_2_axiom_structure() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (x, xs) -> match xs with | Nil -> true | Cons (y, ys) -> (x <= y) && sorted xs";
-        let (_, axioms, _) = generate_axioms_for(program_str, "sorted");
+        let (_, axioms, _) = test_helpers::generate_axioms_with_wrapper(program_str, "sorted");
 
         // Find the sorted_2 axiom (forward version of Cons/Cons case)
         let sorted_2 = axioms
@@ -358,7 +281,7 @@ mod tests {
     #[test]
     fn test_sorted_2_rev_axiom_structure() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (x, xs) -> match xs with | Nil -> true | Cons (y, ys) -> (x <= y) && sorted xs";
-        let (_, axioms, _) = generate_axioms_for(program_str, "sorted");
+        let (_, axioms, _) = test_helpers::generate_axioms_with_wrapper(program_str, "sorted");
 
         // Find the sorted_2_rev axiom (reverse version of Cons/Cons case)
         let sorted_2_rev = axioms
@@ -366,10 +289,6 @@ mod tests {
             .find(|a| a.name == "sorted_2_rev")
             .expect("sorted_2_rev axiom should exist");
 
-        // Check that the reverse axiom has the expected structure:
-        // For reverse axioms, when we have And(Predicate, Expr) in a step,
-        // the predicate appears as a separate antecedent, followed by the equality.
-        // Pattern: (sorted_wrapper xs res_0) → ((res_0 ∧ (x ≤ y)) = res → (sorted_wrapper l res))
         let lean_output = sorted_2_rev.to_lean();
         assert_eq!(
             lean_output,
@@ -380,21 +299,21 @@ mod tests {
     #[test]
     fn test_generate_axioms_from_mem_function() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t";
-        let (mut parsed_nodes, axioms, wrapper) = generate_axioms_for(program_str, "mem");
+        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "mem");
         assert_eq!(axioms.len(), 4);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
-        validate_axioms(parsed_nodes, axioms);
+        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
     fn test_generate_axioms_from_all_eq_function() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons (h, t) -> (h = x) && all_eq t x";
-        let (mut parsed_nodes, axioms, wrapper) = generate_axioms_for(program_str, "all_eq");
+        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "all_eq");
         assert_eq!(axioms.len(), 4);
         assert_eq!(axioms[0].params.len(), 3);
         assert_eq!(axioms[1].params.len(), 6);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
-        validate_axioms(parsed_nodes, axioms);
+        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
@@ -405,10 +324,10 @@ mod tests {
             match t with
             | Leaf -> true
             | Node (y, l, r) -> x <= y && lower_bound l x && lower_bound r x";
-        let (mut parsed_nodes, axioms, wrapper) = generate_axioms_for(program_str, "lower_bound");
+        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "lower_bound");
         assert_eq!(axioms.len(), 4);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
-        validate_axioms(parsed_nodes, axioms);
+        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
@@ -419,16 +338,16 @@ mod tests {
             match t with
             | Leaf -> true
             | Node (y, l, r) -> y <= x && upper_bound l x && upper_bound r x";
-        let (mut parsed_nodes, axioms, wrapper) = generate_axioms_for(program_str, "upper_bound");
+        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "upper_bound");
         assert_eq!(axioms.len(), 4);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
-        validate_axioms(parsed_nodes, axioms);
+        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
     fn test_len_1_axiom_structure() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (x, xs) -> 1 + len xs";
-        let (_, axioms, _) = generate_axioms_for(program_str, "len");
+        let (_, axioms, _) = test_helpers::generate_axioms_with_wrapper(program_str, "len");
 
         // Find the len_1 axiom (forward version of Cons case)
         let len_1 = axioms
@@ -445,7 +364,7 @@ mod tests {
     #[test]
     fn test_mem_1_rev_axiom_structure() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t";
-        let (_, axioms, _) = generate_axioms_for(program_str, "mem");
+        let (_, axioms, _) = test_helpers::generate_axioms_with_wrapper(program_str, "mem");
 
         // Find the mem_1_rev axiom (reverse version of Cons case)
         let mem_1_rev = axioms
