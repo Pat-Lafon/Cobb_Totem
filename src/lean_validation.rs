@@ -9,8 +9,6 @@ fn debug_enabled() -> bool {
 
 /// Validate generated Lean code by running the lean type checker via stdin
 pub fn validate_lean_code(code: &str) -> Result<(), String> {
-    let wrapped_code = code.to_string();
-
     if debug_enabled() {
         debug_print_lean(code);
     }
@@ -32,8 +30,10 @@ pub fn validate_lean_code(code: &str) -> Result<(), String> {
         })?;
 
     // Write code to stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(wrapped_code.as_bytes()).map_err(|e| {
+    {
+        let mut stdin = child.stdin.take()
+            .ok_or_else(|| format!("Lean code validation failed:\n{}\n\nFailed to open stdin", code))?;
+        stdin.write_all(code.as_bytes()).map_err(|e| {
             format!(
                 "Lean code validation failed:\n{}\n\nFailed to write to stdin: {}",
                 code, e
@@ -51,18 +51,33 @@ pub fn validate_lean_code(code: &str) -> Result<(), String> {
     if output.status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "Lean code validation failed:\n{}\n\nError: {}",
-            code,
-            String::from_utf8_lossy(&output.stdout)
-        ))
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let mut error_msg = format!(
+            "Lean code validation failed:\n{}\n\nError:\n{}",
+            code, stdout
+        );
+        if !stderr.is_empty() {
+            error_msg.push_str(&format!("\nStderr:\n{}", stderr));
+        }
+        Err(error_msg)
     }
 }
 
 /// Print generated Lean code for debugging
 pub fn debug_print_lean(code: &str) {
+    // Limit output to prevent spam from very large code
+    const MAX_DEBUG_LINES: usize = 1000;
+    let line_count = code.lines().count();
+
     eprintln!("\n=== Generated Lean Code ===");
-    for line in code.lines() {
+    if line_count > MAX_DEBUG_LINES {
+        eprintln!("(Truncated: {} total lines, showing first {})", line_count, MAX_DEBUG_LINES);
+    }
+    for (i, line) in code.lines().enumerate() {
+        if i >= MAX_DEBUG_LINES {
+            break;
+        }
         eprintln!("{}", line);
     }
     eprintln!("===========================\n");
