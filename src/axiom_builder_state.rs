@@ -27,10 +27,6 @@ pub struct AxiomBuilderState {
     pub universal_params: Vec<Parameter>,
     /// Optional closure to determine proof technique for each axiom
     pub proof: Option<Box<dyn Fn(&Axiom) -> String>>,
-    /// Cached wrapper binding (set by create_wrapper)
-    /// TODO: we just guessed before with the name... that might end up
-    /// happening here too
-    wrapper_binding: Option<LetBinding>,
 }
 
 impl std::fmt::Debug for AxiomBuilderState {
@@ -41,7 +37,6 @@ impl std::fmt::Debug for AxiomBuilderState {
             .field("body_propositions", &self.body_propositions)
             .field("universal_params", &self.universal_params)
             .field("proof", &self.proof.as_ref().map(|_| "<closure>"))
-            .field("wrapper_binding", &self.wrapper_binding)
             .finish()
     }
 }
@@ -60,7 +55,6 @@ impl AxiomBuilderState {
             body_propositions,
             universal_params,
             proof: None,
-            wrapper_binding: None,
         }
     }
 
@@ -226,7 +220,6 @@ impl AxiomBuilderState {
     pub fn create_wrapper(&mut self) -> LetBinding {
         use crate::create_wrapper;
         let binding = create_wrapper::create_wrapper(&self.function_binding);
-        self.wrapper_binding = Some(binding.clone());
         binding
     }
 
