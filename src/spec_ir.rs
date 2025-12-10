@@ -152,10 +152,8 @@ impl Axiom {
             .count();
 
         if existential_count > 0 {
-            let mut tactic = "\ntry aesop (config := { maxRuleHeartbeats := 20000 })
-intros
-"
-            .to_string();
+            let mut tactic =
+                "\ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros\n".to_string();
 
             // Generate refine/rotate_left pairs for each existential
             for _ in 0..existential_count {
@@ -200,6 +198,35 @@ impl ToLean for Axiom {
 }
 
 impl Proposition {
+    /// Format a predicate for display, handling both empty and non-empty argument lists.
+    fn format_predicate(
+        name: &str,
+        args: &[Expression],
+        f: impl Fn(&Expression) -> String,
+    ) -> String {
+        if args.is_empty() {
+            name.to_string()
+        } else {
+            let args_str = args.iter().map(|e| f(e)).collect::<Vec<_>>().join(" ");
+            format!("({} {})", name, args_str)
+        }
+    }
+
+    /// Format a constructor for display, handling both empty and non-empty argument lists.
+    fn format_constructor(
+        name: &ConstructorName,
+        args: &[Expression],
+        f: impl Fn(&Expression) -> String,
+    ) -> String {
+        let name_str = format!(".{}", name);
+        if args.is_empty() {
+            name_str
+        } else {
+            let args_str = args.iter().map(|e| f(e)).collect::<Vec<_>>().join(" ");
+            format!("({} {})", name_str, args_str)
+        }
+    }
+
     /// Fold over the structure of a proposition, applying a transformation function at each node.
     /// The transformation function receives the current proposition and must return the transformed result.
     /// This enables bottom-up structural transformations on the proposition tree.
@@ -233,7 +260,7 @@ impl Proposition {
     pub fn as_expr(&self) -> &Expression {
         match self {
             Proposition::Expr(expression) => expression,
-            _ => panic!("Only call on an expression"),
+            _ => panic!("Expected Proposition::Expr, got {:?}", self),
         }
     }
 
@@ -271,16 +298,11 @@ impl fmt::Display for Proposition {
         match self {
             Proposition::Expr(expr) => write!(f, "{}", expr),
             Proposition::Predicate(name, args) => {
-                if args.is_empty() {
-                    write!(f, "{}", name)
-                } else {
-                    let args_str = args
-                        .iter()
-                        .map(|e| e.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    write!(f, "({} {})", name, args_str)
-                }
+                write!(
+                    f,
+                    "{}",
+                    Proposition::format_predicate(name, args, |e| e.to_string())
+                )
             }
             Proposition::Implication(p, q) => {
                 write!(f, "({})#==>({})", p, q)
@@ -309,16 +331,7 @@ impl ToLean for Proposition {
         match self {
             Proposition::Expr(expr) => expr.to_lean(),
             Proposition::Predicate(name, args) => {
-                let args_str = args
-                    .iter()
-                    .map(|e| e.to_lean())
-                    .collect::<Vec<_>>()
-                    .join(" ");
-                if args.is_empty() {
-                    name.clone()
-                } else {
-                    format!("({} {})", name, args_str)
-                }
+                Proposition::format_predicate(name, args, |e| e.to_lean())
             }
             Proposition::Implication(p, q) => {
                 format!("({} → {})", p.to_lean(), q.to_lean())
@@ -371,16 +384,11 @@ impl fmt::Display for Expression {
                 write!(f, "{}({})", op, expr)
             }
             Expression::Constructor(name, args) => {
-                if args.is_empty() {
-                    write!(f, ".{}", name)
-                } else {
-                    let args_str = args
-                        .iter()
-                        .map(|arg| arg.to_string())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    write!(f, "(.{} {})", name, args_str)
-                }
+                write!(
+                    f,
+                    "{}",
+                    Proposition::format_constructor(name, args, |e| e.to_string())
+                )
             }
             Expression::IfThenElse {
                 condition,
@@ -405,17 +413,7 @@ impl ToLean for Expression {
                 format!("{}({})", op.to_lean(), expr.to_lean())
             }
             Expression::Constructor(name, args) => {
-                let name_str = format!(".{}", name);
-                if args.is_empty() {
-                    name_str
-                } else {
-                    let args_str = args
-                        .iter()
-                        .map(|arg| arg.to_lean())
-                        .collect::<Vec<_>>()
-                        .join(" ");
-                    format!("({} {})", name_str, args_str)
-                }
+                Proposition::format_constructor(name, args, |e| e.to_lean())
             }
             Expression::IfThenElse {
                 condition,
@@ -476,11 +474,18 @@ mod tests {
 
     use crate::lean_validation::validate_lean_code;
 
+    /// Helper function to set up common test fixtures
+    fn setup_ilist_context() -> (Vec<prog_ir::AstNode>, prog_ir::TypeDecl) {
+        let prelude_nodes =
+            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+        let ilist_type = create_ilist_type();
+        (prelude_nodes, ilist_type)
+    }
+
     #[test]
     fn test_axiom_with_prelude() {
         // Load the prelude predicates
-        let prelude_nodes =
-            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+        let (prelude_nodes, _) = setup_ilist_context();
 
         // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((emp l) → ¬(hd l x)))
         let axiom = Axiom {
@@ -841,10 +846,6 @@ mod tests {
 
     #[test]
     fn test_axiom_list_tl_len_plus_1() {
-        // Load the prelude predicates
-        let prelude_nodes =
-            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
-
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (∀ (n : Int), (((tl l l1) ∧ (len l1 n)) → (len l (n + 1)))))
         let axiom = Axiom {
             name: "list_tl_len_plus_1".to_string(),
@@ -886,7 +887,7 @@ mod tests {
         };
 
         // Build the Lean context with prelude definitions and axiom
-        let ilist_type = create_ilist_type();
+        let (prelude_nodes, ilist_type) = setup_ilist_context();
         let lean_code = crate::lean_backend::LeanContextBuilder::new()
             .with_nodes(prelude_nodes)
             .with_axioms(vec![axiom])
@@ -1028,9 +1029,7 @@ mod tests {
 
     #[test]
     fn test_axiom_list_single_sorted() {
-        // Load the prelude predicates
-        let prelude_nodes =
-            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+        let (prelude_nodes, ilist_type) = setup_ilist_context();
 
         // Create an axiom that matches the Lean theorem list_single_sorted_1:
         // ∀ (l : ilist), (∀ (x : Int), ((l == .Cons x .Nil) → (sorted l)))
@@ -1063,7 +1062,6 @@ mod tests {
         };
 
         // Build the Lean context with prelude definitions and axiom
-        let ilist_type = create_ilist_type();
         let lean_code = crate::lean_backend::LeanContextBuilder::new()
             .with_nodes(prelude_nodes)
             .with_axioms(vec![axiom])
@@ -1087,9 +1085,7 @@ mod tests {
 
     #[test]
     fn test_axiom_list_tl_sorted() {
-        // Load the prelude predicates
-        let prelude_nodes =
-            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+        let (prelude_nodes, ilist_type) = setup_ilist_context();
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (((tl l l1) ∧ (sorted l)) → (sorted l1)))
         let axiom = Axiom {
@@ -1121,7 +1117,6 @@ mod tests {
         };
 
         // Build the Lean context with prelude definitions and axiom
-        let ilist_type = create_ilist_type();
         let lean_code = crate::lean_backend::LeanContextBuilder::new()
             .with_nodes(prelude_nodes)
             .with_axioms(vec![axiom])
@@ -1145,9 +1140,7 @@ mod tests {
 
     #[test]
     fn test_axiom_list_hd_sorted() {
-        // Load the prelude predicates
-        let prelude_nodes =
-            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+        let (prelude_nodes, ilist_type) = setup_ilist_context();
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (∀ (x : Int), (∀ (y : Int), (((tl l l1) ∧ (sorted l)) → ((emp l1) ∨ (((hd l1 y) ∧ (hd l x)) → (x <= y)))))))
         let axiom = Axiom {
@@ -1206,7 +1199,6 @@ mod tests {
         };
 
         // Build the Lean context with prelude definitions and axiom
-        let ilist_type = create_ilist_type();
         let lean_code = crate::lean_backend::LeanContextBuilder::new()
             .with_nodes(prelude_nodes)
             .with_axioms(vec![axiom])
@@ -1230,9 +1222,7 @@ mod tests {
 
     #[test]
     fn test_axiom_list_sorted_hd() {
-        // Load the prelude predicates
-        let prelude_nodes =
-            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+        let (prelude_nodes, ilist_type) = setup_ilist_context();
 
         // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (∀ (x : Int), (∀ (y : Int), (((tl l l1) ∧ ((sorted l1) ∧ ((hd l y) ∧ ((hd l1 x) ∧ (y <= x))))) → (sorted l)))))
         let axiom = Axiom {
@@ -1291,7 +1281,6 @@ mod tests {
         };
 
         // Build the Lean context with prelude definitions and axiom
-        let ilist_type = create_ilist_type();
         let lean_code = crate::lean_backend::LeanContextBuilder::new()
             .with_nodes(prelude_nodes)
             .with_axioms(vec![axiom])
@@ -1315,9 +1304,7 @@ mod tests {
 
     #[test]
     fn test_axiom_list_mem() {
-        // Load the prelude predicates
-        let prelude_nodes =
-            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+        let (prelude_nodes, ilist_type) = setup_ilist_context();
 
         // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((mem x l) → ¬(emp l)))
         let axiom = Axiom {
@@ -1343,7 +1330,6 @@ mod tests {
         };
 
         // Build the Lean context with prelude definitions and axiom
-        let ilist_type = create_ilist_type();
         let lean_code = crate::lean_backend::LeanContextBuilder::new()
             .with_nodes(prelude_nodes)
             .with_axioms(vec![axiom])
@@ -1367,9 +1353,7 @@ mod tests {
 
     #[test]
     fn test_axiom_list_all_eq() {
-        // Load the prelude predicates
-        let prelude_nodes =
-            predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
+        let (prelude_nodes, ilist_type) = setup_ilist_context();
 
         // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((all_eq l x) → (emp l ∨ (hd l x))))
         let axiom = Axiom {
@@ -1404,7 +1388,6 @@ mod tests {
         };
 
         // Build the Lean context with prelude definitions and axiom
-        let ilist_type = create_ilist_type();
         let lean_code = crate::lean_backend::LeanContextBuilder::new()
             .with_nodes(prelude_nodes)
             .with_axioms(vec![axiom])
