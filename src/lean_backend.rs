@@ -151,8 +151,10 @@ impl ToLean for AstNode {
 pub struct LeanContextBuilder {
     nodes: Vec<AstNode>,
     axioms: Vec<crate::spec_ir::Axiom>,
-    types_with_theorems: std::collections::HashMap<String, String>, // type_name -> theorems
+    types_with_theorems: TypeTheorems,
 }
+
+type TypeTheorems = std::collections::HashMap<String, String>;
 
 impl LeanContextBuilder {
     pub fn new() -> Self {
@@ -215,13 +217,34 @@ impl LeanContextBuilder {
 #[cfg(test)]
 mod tests {
     use crate::{
-        Literal, VarName,
+        VarName,
         lean_validation::validate_lean_code,
-        prog_ir::{ConstructorName, Pattern, Type, TypeDecl, Variant},
+        prog_ir::{Type, TypeDecl, Variant},
     };
 
     use super::*;
     use crate::spec_ir;
+
+    fn create_len_function() -> LetBinding {
+        let code = r#"
+            let rec len (l : ilist) (n : int) : bool = match l with
+              | Nil -> n = 0
+              | Cons (_, rest) -> len rest (n - 1)
+        "#;
+
+        let nodes = crate::ocamlparser::OcamlParser::parse_nodes(code)
+            .expect("Failed to parse len function");
+
+        nodes
+            .iter()
+            .find_map(|node| match node {
+                AstNode::LetBinding(binding) if binding.name == VarName::new("len") => {
+                    Some(binding.clone())
+                }
+                _ => None,
+            })
+            .expect("Failed to find len function in parsed nodes")
+    }
 
     #[test]
     fn test_simple_bool_type() {
@@ -265,47 +288,7 @@ mod tests {
     #[test]
     fn test_len_function() {
         let ilist_type = spec_ir::create_ilist_type();
-
-        let len_function = LetBinding {
-            name: VarName::new("len"),
-            is_recursive: true,
-            params: vec![
-                (VarName::new("l"), Type::Named("ilist".to_string())),
-                (VarName::new("n"), Type::Int),
-            ],
-            return_type: Some(Type::Bool),
-            body: Expression::Match(
-                Box::new(Expression::Variable("l".into())),
-                vec![
-                    (
-                        Pattern::Constructor(ConstructorName::Simple("Nil".to_string()), vec![]),
-                        Expression::BinaryOp(
-                            Box::new(Expression::Variable("n".into())),
-                            BinaryOp::Eq,
-                            Box::new(Expression::Literal(Literal::Int(0))),
-                        ),
-                    ),
-                    (
-                        Pattern::Constructor(
-                            ConstructorName::Simple("Cons".to_string()),
-                            vec![Pattern::Wildcard, Pattern::Variable("rest".into())],
-                        ),
-                        Expression::Application(
-                            Box::new(Expression::Variable("len".into())),
-                            vec![
-                                Expression::Variable("rest".into()),
-                                Expression::BinaryOp(
-                                    Box::new(Expression::Variable("n".into())),
-                                    BinaryOp::Sub,
-                                    Box::new(Expression::Literal(Literal::Int(1))),
-                                ),
-                            ],
-                        ),
-                    ),
-                ],
-            ),
-            attributes: Vec::new(),
-        };
+        let len_function = create_len_function();
 
         let lean_code = format!("{}\n\n{}", ilist_type.to_lean(), len_function.to_lean());
         assert_eq!(
@@ -345,16 +328,7 @@ mod tests {
         };
 
         let lean_code = func.to_lean();
-        assert!(
-            lean_code.contains("@[simp, grind]"),
-            "Expected attribute annotation @[simp, grind] in output, got: {}",
-            lean_code
-        );
-        assert!(
-            lean_code.starts_with("@[simp, grind]"),
-            "Attributes should be at the start, got: {}",
-            lean_code
-        );
+        assert_eq!(lean_code, "@[simp, grind]\ndef bar (y : Bool) : Bool := y");
         validate_lean_code(&lean_code)
             .unwrap_or_else(|e| panic!("Generated Lean code failed validation: {}", e));
     }
@@ -375,47 +349,7 @@ mod tests {
     #[test]
     fn test_context_builder_with_ilist_and_functions() {
         let ilist_type = spec_ir::create_ilist_type();
-
-        let len_function = LetBinding {
-            name: VarName::new("len"),
-            is_recursive: true,
-            params: vec![
-                (VarName::new("l"), Type::Named("ilist".to_string())),
-                (VarName::new("n"), Type::Int),
-            ],
-            return_type: Some(Type::Bool),
-            body: Expression::Match(
-                Box::new(Expression::Variable("l".into())),
-                vec![
-                    (
-                        Pattern::Constructor(ConstructorName::Simple("Nil".to_string()), vec![]),
-                        Expression::BinaryOp(
-                            Box::new(Expression::Variable("n".into())),
-                            BinaryOp::Eq,
-                            Box::new(Expression::Literal(Literal::Int(0))),
-                        ),
-                    ),
-                    (
-                        Pattern::Constructor(
-                            ConstructorName::Simple("Cons".to_string()),
-                            vec![Pattern::Wildcard, Pattern::Variable("rest".into())],
-                        ),
-                        Expression::Application(
-                            Box::new(Expression::Variable("len".into())),
-                            vec![
-                                Expression::Variable("rest".into()),
-                                Expression::BinaryOp(
-                                    Box::new(Expression::Variable("n".into())),
-                                    BinaryOp::Sub,
-                                    Box::new(Expression::Literal(Literal::Int(1))),
-                                ),
-                            ],
-                        ),
-                    ),
-                ],
-            ),
-            attributes: Vec::new(),
-        };
+        let len_function = create_len_function();
 
         let builder = LeanContextBuilder::new().with_nodes(vec![
             AstNode::TypeDeclaration(ilist_type.clone()),
