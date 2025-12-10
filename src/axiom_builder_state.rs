@@ -1,7 +1,7 @@
 use itertools::Itertools as _;
 
 use crate::VarName;
-use crate::create_wrapper::RESULT_PARAM;
+use crate::create_wrapper::{RESULT_PARAM, wrapper_name};
 use crate::prog_ir::{LetBinding, Type, TypeDecl};
 use crate::spec_ir::{Axiom, Expression, Parameter, Proposition, Quantifier};
 
@@ -108,7 +108,7 @@ impl AxiomBuilderState {
 
                 let body = Proposition::Implication(
                     Box::new(Proposition::Predicate(
-                        format!("{}_wrapper", self.function_binding.name),
+                        wrapper_name(&self.function_binding.name),
                         func_params_wrapper,
                     )),
                     Box::new(steps_body),
@@ -164,7 +164,7 @@ impl AxiomBuilderState {
                 func_params_wrapper.push(Expression::Variable(VarName(RESULT_PARAM.to_string())));
 
                 let mut steps_body = Proposition::Predicate(
-                    format!("{}_wrapper", self.function_binding.name),
+                    wrapper_name(&self.function_binding.name),
                     func_params_wrapper,
                 );
                 /* body_prop.proposition_steps.last().unwrap().clone(); */

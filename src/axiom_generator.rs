@@ -1,6 +1,6 @@
 use crate::VarName;
 use crate::axiom_builder_state::{AxiomBuilderState, BodyPropositionData};
-use crate::create_wrapper::RESULT_PARAM;
+use crate::create_wrapper::{RESULT_PARAM, wrapper_name};
 use crate::prog_ir::{LetBinding, Type, TypeDecl};
 use crate::spec_ir::{Expression, Parameter, Proposition};
 
@@ -267,7 +267,7 @@ impl AxiomGenerator {
                 let exists_var = self.next_var();
                 let existential = Expression::Variable(exists_var.clone());
 
-                let func_name_wrapper = format!("{func_name}_wrapper");
+                let func_name_wrapper = wrapper_name(&func_name);
                 converted_args.push(existential.clone());
 
                 // Flatten all preceding steps from arguments

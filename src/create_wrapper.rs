@@ -6,6 +6,11 @@ use crate::{
 /// Result parameter name used in wrapper functions
 pub const RESULT_PARAM: &str = "res";
 
+/// Generate a wrapper function name by appending "_wrapper" to the given name
+pub fn wrapper_name(name: &VarName) -> String {
+    format!("{name}_wrapper")
+}
+
 /// Generate a wrapper function that checks `f(...params) == res` for a given function
 pub fn create_wrapper(binding: &LetBinding) -> LetBinding {
     assert!(
@@ -16,8 +21,6 @@ pub fn create_wrapper(binding: &LetBinding) -> LetBinding {
         .return_type
         .clone()
         .expect("Function must have a return type");
-
-    let wrapper_name = format!("{}_wrapper", binding.name);
 
     // Create function arguments from all original parameters
     let arg_exprs: Vec<Expression> = binding
@@ -31,7 +34,7 @@ pub fn create_wrapper(binding: &LetBinding) -> LetBinding {
     wrapper_params.push((VarName::new(RESULT_PARAM), return_type.clone()));
 
     LetBinding {
-        name: VarName::new(wrapper_name),
+        name: VarName::new(wrapper_name(&binding.name)),
         attributes: binding.attributes.clone(),
         is_recursive: false,
         params: wrapper_params,
@@ -51,19 +54,15 @@ pub fn create_wrapper(binding: &LetBinding) -> LetBinding {
 mod tests {
     use super::*;
     use crate::lean_backend::LeanContextBuilder;
-    use crate::ocamlparser::OcamlParser;
     use crate::prog_ir::AstNode;
+    use crate::test_helpers;
 
     #[test]
     fn test_transform_length_function() {
         let ocaml_src = "let[@simp][@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons(_, tl) -> 1 + len tl";
-        let binding = match OcamlParser::parse_nodes(ocaml_src) {
-            Ok(nodes) => match &nodes[0] {
-                crate::prog_ir::AstNode::LetBinding(b) => b.clone(),
-                _ => panic!("Expected LetBinding"),
-            },
-            Err(e) => panic!("Failed to parse OCaml: {}", e),
-        };
+        let nodes = crate::ocamlparser::OcamlParser::parse_nodes(ocaml_src)
+            .unwrap_or_else(|e| panic!("Failed to parse OCaml: {}", e));
+        let binding = test_helpers::find_function(&nodes, "len");
 
         let transformed = create_wrapper(&binding);
 
@@ -80,13 +79,9 @@ def len_wrapper (l : ilist) (res : Int) : Bool := (len l == res)"#;
     #[test]
     fn test_transform_multi_parameter_function() {
         let ocaml_src = "let[@simp] add (x : int) (y : int) : int = x + y";
-        let binding = match OcamlParser::parse_nodes(ocaml_src) {
-            Ok(nodes) => match &nodes[0] {
-                crate::prog_ir::AstNode::LetBinding(b) => b.clone(),
-                _ => panic!("Expected LetBinding"),
-            },
-            Err(e) => panic!("Failed to parse OCaml: {}", e),
-        };
+        let nodes = crate::ocamlparser::OcamlParser::parse_nodes(ocaml_src)
+            .unwrap_or_else(|e| panic!("Failed to parse OCaml: {}", e));
+        let binding = test_helpers::find_function(&nodes, "add");
 
         let transformed = create_wrapper(&binding);
 
@@ -104,13 +99,9 @@ def add_wrapper (x : Int) (y : Int) (res : Int) : Bool := (add x y == res)"#;
     fn test_transform_alternative_return_type() {
         let ocaml_src =
             "let[@simp] is_empty (l : ilist) : bool = match l with | Nil -> true | _ -> false";
-        let binding = match OcamlParser::parse_nodes(ocaml_src) {
-            Ok(nodes) => match &nodes[0] {
-                crate::prog_ir::AstNode::LetBinding(b) => b.clone(),
-                _ => panic!("Expected LetBinding"),
-            },
-            Err(e) => panic!("Failed to parse OCaml: {}", e),
-        };
+        let nodes = crate::ocamlparser::OcamlParser::parse_nodes(ocaml_src)
+            .unwrap_or_else(|e| panic!("Failed to parse OCaml: {}", e));
+        let binding = test_helpers::find_function(&nodes, "is_empty");
 
         let transformed = create_wrapper(&binding);
 
