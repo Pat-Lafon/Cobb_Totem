@@ -39,8 +39,8 @@ impl OcamlParser {
     fn parse_type(&self, node: Node) -> Type {
         let text = node
             .utf8_text(self.source.as_bytes())
-            .expect("Failed to extract text from type node");
-        text.parse().expect("Failed to parse type")
+            .unwrap_or_else(|e| panic!("Failed to extract text from type node: {}", e));
+        text.parse().unwrap_or_else(|e| panic!("Failed to parse type: {}", e))
     }
 
     /// Helper: moves cursor to parent and asserts success.
@@ -93,7 +93,8 @@ impl OcamlParser {
                 let mut pattern_cursor = pattern_node.walk();
                 assert!(
                     pattern_cursor.goto_first_child(),
-                    "typed_pattern has no children"
+                    "typed_pattern has no children: {}",
+                    pattern_node.kind()
                 );
 
                 // Skip opening paren
@@ -113,7 +114,7 @@ impl OcamlParser {
                 // value_pattern is a leaf containing the variable name
                 let name = pattern_node_inner
                     .utf8_text(self.source.as_bytes())
-                    .expect("Failed to extract parameter name")
+                    .unwrap_or_else(|e| panic!("Failed to extract parameter name: {}", e))
                     .to_string();
 
                 assert!(
@@ -245,7 +246,7 @@ impl OcamlParser {
 
         let mut variants = Vec::new();
         if cursor.goto_first_child() {
-            let mut expect_constructor = !cursor.node().kind().eq("|");
+            let mut expect_constructor = cursor.node().kind() != "|";
 
             loop {
                 let variant_child = cursor.node();
@@ -466,17 +467,17 @@ impl OcamlParser {
     fn parse_number_from_node(&self, node: Node) -> Literal {
         let text = node
             .utf8_text(self.source.as_bytes())
-            .expect("Failed to extract number text");
+            .unwrap_or_else(|e| panic!("Failed to extract number text: {}", e));
         text.trim()
             .parse::<i32>()
             .map(Literal::Int)
-            .unwrap_or_else(|_| panic!("Failed to parse number: '{}'", text))
+            .unwrap_or_else(|e| panic!("Failed to parse number '{}': {}", text, e))
     }
 
     fn parse_boolean_from_node(&self, node: Node) -> Literal {
         let text = node
             .utf8_text(self.source.as_bytes())
-            .expect("Failed to extract boolean text");
+            .unwrap_or_else(|e| panic!("Failed to extract boolean text: {}", e));
         match text.trim() {
             "true" => Literal::Bool(true),
             "false" => Literal::Bool(false),
