@@ -746,10 +746,7 @@ mod tests {
         // Create an axiom: ∀ (l : ilist), ((emp l) → (len l 0))
         let axiom = Axiom {
             name: "list_len_0_emp".to_string(),
-            params: vec![Parameter::universal(
-                "l".to_string(),
-                Type::Named("ilist".to_string()),
-            )],
+            params: vec![Parameter::universal("l", Type::Named("ilist".to_string()))],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
                     "emp".to_string(),
@@ -987,10 +984,7 @@ mod tests {
         // Create an axiom: ∀ (l : ilist), ((emp l) → (sorted l))
         let axiom = Axiom {
             name: "list_emp_sorted".to_string(),
-            params: vec![Parameter::universal(
-                "l".to_string(),
-                Type::Named("ilist".to_string()),
-            )],
+            params: vec![Parameter::universal("l", Type::Named("ilist".to_string()))],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
                     "emp".to_string(),

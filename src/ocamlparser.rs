@@ -699,7 +699,7 @@ impl OcamlParser {
             }
             Expression::Variable(ref name) => {
                 // Special handling for ite as a variable being applied
-                if name.as_str() == "ite" {
+                if &**name == "ite" {
                     assert_eq!(
                         args.len(),
                         3,

@@ -17,7 +17,7 @@ pub fn create_wrapper(binding: &LetBinding) -> LetBinding {
         .clone()
         .expect("Function must have a return type");
 
-    let wrapper_name = format!("{}_wrapper", binding.name.as_str());
+    let wrapper_name = format!("{}_wrapper", binding.name);
 
     // Create function arguments from all original parameters
     let arg_exprs: Vec<Expression> = binding
