@@ -88,6 +88,7 @@ impl AxiomBuilderState {
             .iter()
             .enumerate()
             .map(|(idx, body_prop)| {
+                // Build implication chain from proposition steps
                 let mut steps_body = body_prop.proposition_steps.last().unwrap().clone();
                 for step in body_prop.proposition_steps[..body_prop.proposition_steps.len() - 1]
                     .iter()
@@ -97,35 +98,16 @@ impl AxiomBuilderState {
                         Proposition::Implication(Box::new(step.clone()), Box::new(steps_body));
                 }
 
-                let mut func_params_wrapper = self
-                    .function_binding
-                    .params
-                    .iter()
-                    .map(|p| Expression::Variable(p.0.clone()))
-                    .collect_vec();
-
-                func_params_wrapper.push(Expression::Variable(VarName(RESULT_PARAM.to_string())));
-
+                let wrapper_params = self.build_wrapper_params();
                 let body = Proposition::Implication(
                     Box::new(Proposition::Predicate(
                         wrapper_name(&self.function_binding.name),
-                        func_params_wrapper,
+                        wrapper_params,
                     )),
                     Box::new(steps_body),
                 );
 
-                let mut params = Parameter::from_vars(&self.function_binding.params);
-                let (uni, ext): (Vec<_>, Vec<_>) = body_prop
-                    .additional_parameters
-                    .clone()
-                    .into_iter()
-                    .partition(|p| p.quantifier == Quantifier::Universal);
-
-                params.extend(uni);
-                params.push(Parameter::universal(
-                    VarName::new(RESULT_PARAM),
-                    self.return_type(),
-                ));
+                let (mut params, ext) = self.build_and_partition_params(&body_prop.additional_parameters);
                 params.extend(ext);
 
                 Axiom {
@@ -149,53 +131,24 @@ impl AxiomBuilderState {
             .iter()
             .enumerate()
             .map(|(idx, body_prop)| {
-                assert!(
-                    !body_prop.proposition_steps.is_empty(),
-                    "Expected at least one proposition step"
-                );
-
-                let mut func_params_wrapper = self
-                    .function_binding
-                    .params
-                    .iter()
-                    .map(|p| Expression::Variable(p.0.clone()))
-                    .collect_vec();
-
-                func_params_wrapper.push(Expression::Variable(VarName(RESULT_PARAM.to_string())));
-
+                let wrapper_params = self.build_wrapper_params();
                 let mut steps_body = Proposition::Predicate(
                     wrapper_name(&self.function_binding.name),
-                    func_params_wrapper,
+                    wrapper_params,
                 );
-                /* body_prop.proposition_steps.last().unwrap().clone(); */
-                for step in body_prop.proposition_steps[..body_prop.proposition_steps.len()]
-                    .iter()
-                    .rev()
-                {
+
+                for step in body_prop.proposition_steps.iter().rev() {
                     steps_body =
                         Proposition::Implication(Box::new(step.clone()), Box::new(steps_body));
                 }
 
-                let body = steps_body;
-
-                let mut params = Parameter::from_vars(&self.function_binding.params);
-                let (uni, ext): (Vec<_>, Vec<_>) = body_prop
-                    .additional_parameters
-                    .clone()
-                    .into_iter()
-                    .partition(|p| p.quantifier == Quantifier::Universal);
-
-                params.extend(uni);
-                params.push(Parameter::universal(
-                    VarName::new(RESULT_PARAM),
-                    self.return_type(),
-                ));
+                let (mut params, ext) = self.build_and_partition_params(&body_prop.additional_parameters);
                 params.extend(ext);
 
                 Axiom {
                     name: format!("{}_{}_rev", self.function_binding.name, idx),
                     params,
-                    body,
+                    body: steps_body,
                     proof: None,
                 }
             })
@@ -218,6 +171,37 @@ impl AxiomBuilderState {
         use crate::create_wrapper;
         let binding = create_wrapper::create_wrapper(&self.function_binding);
         binding
+    }
+
+    /// Build wrapper predicate parameters with the result parameter
+    fn build_wrapper_params(&self) -> Vec<Expression> {
+        let mut params = self
+            .function_binding
+            .params
+            .iter()
+            .map(|p| Expression::Variable(p.0.clone()))
+            .collect_vec();
+        params.push(Expression::Variable(VarName(RESULT_PARAM.to_string())));
+        params
+    }
+
+    /// Build and partition parameters (universal and existential)
+    fn build_and_partition_params(
+        &self,
+        additional_parameters: &[Parameter],
+    ) -> (Vec<Parameter>, Vec<Parameter>) {
+        let mut params = Parameter::from_vars(&self.function_binding.params);
+        let (uni, ext): (Vec<_>, Vec<_>) = additional_parameters
+            .iter()
+            .cloned()
+            .partition(|p| p.quantifier == Quantifier::Universal);
+
+        params.extend(uni);
+        params.push(Parameter::universal(
+            VarName::new(RESULT_PARAM),
+            self.return_type(),
+        ));
+        (params, ext)
     }
 
     /// Validate that all variables in axioms are declared as parameters
