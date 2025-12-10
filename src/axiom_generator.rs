@@ -33,20 +33,8 @@ impl AxiomGenerator {
     }
 
     /// Get the registered return type for a function, if available
-    pub fn get_function_type(&self, name: &VarName) -> Option<&Type> {
+    fn get_function_type(&self, name: &VarName) -> Option<&Type> {
         self.function_types.get(name)
-    }
-
-    /// Convert a list of (VarName, Type) pairs into universal parameters
-    fn varnames_to_universals(params: &[(VarName, Type)]) -> Vec<Parameter> {
-        params
-            .iter()
-            .map(|(name, typ)| Parameter {
-                name: name.clone(),
-                typ: typ.clone(),
-                quantifier: Quantifier::Universal,
-            })
-            .collect()
     }
 
     /// Look up the type of a constructor parameter by constructor name and field index
@@ -185,8 +173,6 @@ impl AxiomGenerator {
             ));
         }
 
-        let universal_params = Self::varnames_to_universals(&binding.params);
-
         self.function_types
             .insert(binding.name.clone(), binding.return_type.clone().unwrap());
         let body_propositions = self.from_expression(&binding.body);
@@ -195,7 +181,6 @@ impl AxiomGenerator {
             self.type_constructors.clone(),
             binding.clone(),
             body_propositions,
-            universal_params,
         ))
     }
 
@@ -343,7 +328,7 @@ impl AxiomGenerator {
                             steps.extend(branch_body_data.proposition_steps);
                             steps
                         };
-                        let mut all_vars = Self::varnames_to_universals(&pattern_vars);
+                        let mut all_vars = Parameter::from_vars(&pattern_vars);
                         all_vars.extend(branch_body_data.additional_parameters);
                         results.push(BodyPropositionData {
                             proposition_steps: final_steps,

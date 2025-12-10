@@ -109,6 +109,14 @@ impl Parameter {
             quantifier: Quantifier::Existential,
         }
     }
+
+    /// Convert a list of (VarName, Type) pairs into universal parameters
+    pub fn from_vars(params: &[(VarName, Type)]) -> Vec<Parameter> {
+        params
+            .iter()
+            .map(|(name, typ)| Parameter::universal(name.clone(), typ.clone()))
+            .collect()
+    }
 }
 
 impl fmt::Display for Parameter {

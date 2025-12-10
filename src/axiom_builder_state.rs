@@ -23,8 +23,6 @@ pub struct AxiomBuilderState {
     pub function_binding: LetBinding,
     /// Body propositions with their associated parameters
     pub body_propositions: Vec<BodyPropositionData>,
-    /// Universal parameters from function signature
-    pub universal_params: Vec<Parameter>,
     /// Optional closure to determine proof technique for each axiom
     pub proof: Option<Box<dyn Fn(&Axiom) -> String>>,
 }
@@ -35,7 +33,6 @@ impl std::fmt::Debug for AxiomBuilderState {
             .field("type_constructors", &self.type_constructors)
             .field("function_binding", &self.function_binding)
             .field("body_propositions", &self.body_propositions)
-            .field("universal_params", &self.universal_params)
             .field("proof", &self.proof.as_ref().map(|_| "<closure>"))
             .finish()
     }
@@ -47,13 +44,11 @@ impl AxiomBuilderState {
         type_constructors: Vec<TypeDecl>,
         function_binding: LetBinding,
         body_propositions: Vec<BodyPropositionData>,
-        universal_params: Vec<Parameter>,
     ) -> Self {
         Self {
             type_constructors,
             function_binding,
             body_propositions,
-            universal_params,
             proof: None,
         }
     }
@@ -103,9 +98,10 @@ impl AxiomBuilderState {
                 }
 
                 let mut func_params_wrapper = self
-                    .universal_params
+                    .function_binding
+                    .params
                     .iter()
-                    .map(|p| Expression::Variable(p.name.clone()))
+                    .map(|p| Expression::Variable(p.0.clone()))
                     .collect_vec();
 
                 func_params_wrapper.push(Expression::Variable(VarName(RESULT_PARAM.to_string())));
@@ -118,7 +114,7 @@ impl AxiomBuilderState {
                     Box::new(steps_body),
                 );
 
-                let mut params = self.universal_params.clone();
+                let mut params = Parameter::from_vars(&self.function_binding.params);
                 let (uni, ext): (Vec<_>, Vec<_>) = body_prop
                     .additional_parameters
                     .clone()
@@ -159,9 +155,10 @@ impl AxiomBuilderState {
                 );
 
                 let mut func_params_wrapper = self
-                    .universal_params
+                    .function_binding
+                    .params
                     .iter()
-                    .map(|p| Expression::Variable(p.name.clone()))
+                    .map(|p| Expression::Variable(p.0.clone()))
                     .collect_vec();
 
                 func_params_wrapper.push(Expression::Variable(VarName(RESULT_PARAM.to_string())));
@@ -181,7 +178,7 @@ impl AxiomBuilderState {
 
                 let body = steps_body;
 
-                let mut params = self.universal_params.clone();
+                let mut params = Parameter::from_vars(&self.function_binding.params);
                 let (uni, ext): (Vec<_>, Vec<_>) = body_prop
                     .additional_parameters
                     .clone()
@@ -267,7 +264,6 @@ mod tests {
 
     /// Helper: validate generated axioms through Lean backend
     fn validate_axioms(parsed_nodes: Vec<AstNode>, axioms: Vec<Axiom>) {
-
         // Extract type theorems from type declarations
         let mut builder = LeanContextBuilder::new();
         for node in &parsed_nodes {
