@@ -1,17 +1,17 @@
-use itertools::Itertools as _;
-
 use crate::{
     VarName,
     spec_ir::{Axiom, Expression, Proposition, Quantifier},
 };
 
-fn collect_all_variables(prop: &Proposition) -> std::collections::HashSet<VarName> {
-    let mut vars = std::collections::HashSet::new();
+type VarSet = std::collections::HashSet<VarName>;
+
+fn collect_all_variables(prop: &Proposition) -> VarSet {
+    let mut vars = VarSet::new();
     collect_variables_in_prop(prop, &mut vars);
     vars
 }
 
-fn collect_variables_in_prop(prop: &Proposition, vars: &mut std::collections::HashSet<VarName>) {
+fn collect_variables_in_prop(prop: &Proposition, vars: &mut VarSet) {
     match prop {
         Proposition::Expr(expr) => collect_variables_in_expr(expr, vars),
         Proposition::Predicate(_, args) => {
@@ -31,7 +31,7 @@ fn collect_variables_in_prop(prop: &Proposition, vars: &mut std::collections::Ha
     }
 }
 
-fn collect_variables_in_expr(expr: &Expression, vars: &mut std::collections::HashSet<VarName>) {
+fn collect_variables_in_expr(expr: &Expression, vars: &mut VarSet) {
     match expr {
         Expression::Variable(name) => {
             vars.insert(name.clone());
@@ -70,17 +70,20 @@ impl Axiom {
 
     /// Check that all variables in the body are declared as parameters
     fn validate_no_free_variables(&self) -> Result<(), String> {
-        let declared_vars: std::collections::HashSet<_> =
+        let declared_vars: VarSet =
             self.params.iter().map(|p| p.name.clone()).collect();
 
         let all_vars = collect_all_variables(&self.body);
-        let mut free_vars = all_vars.difference(&declared_vars).peekable();
+        let free_vars: Vec<_> = all_vars.difference(&declared_vars).collect();
 
-        if free_vars.peek().is_none() {
+        if free_vars.is_empty() {
             return Ok(());
         }
 
-        Err(format!("Free variables in body: {}", free_vars.join(", ")))
+        Err(format!(
+            "Free variables in body: {}",
+            free_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
+        ))
     }
 }
 
@@ -112,7 +115,7 @@ mod tests {
             proof: None,
         };
 
-        assert!(axiom.validate_no_free_variables().is_err());
+        assert!(axiom.validate_no_free_variables().is_err(), "Expected validation to fail for free variable");
     }
 
     #[test]
