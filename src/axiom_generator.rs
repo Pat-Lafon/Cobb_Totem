@@ -212,14 +212,22 @@ impl AxiomGenerator {
                 additional_parameters: vec![],
             }],
             crate::prog_ir::Expression::UnaryOp(unary_op, expression) => {
-                let expr = Self::extract_single_expr(self.from_expression(expression))
-                    .unwrap_or_else(|e| panic!("UnaryOp operand: {}", e));
+                let (exprs, preceding_steps_list, params) = Self::extract_exprs_with_steps(vec![
+                    self.from_expression(expression),
+                ])
+                .unwrap_or_else(|e| panic!("UnaryOp operand: {}", e));
+
+                assert_eq!(exprs.len(), 1, "UnaryOp requires exactly 1 expression");
+
+                let mut proposition_steps = preceding_steps_list.concat();
+                proposition_steps.push(Proposition::Expr(Expression::UnaryOp(
+                    *unary_op,
+                    Box::new(exprs[0].clone()),
+                )));
+
                 vec![BodyPropositionData {
-                    proposition_steps: vec![Proposition::Expr(Expression::UnaryOp(
-                        *unary_op,
-                        Box::new(expr),
-                    ))],
-                    additional_parameters: vec![],
+                    proposition_steps,
+                    additional_parameters: params,
                 }]
             }
             crate::prog_ir::Expression::BinaryOp(expression, binary_op, expression1) => {
