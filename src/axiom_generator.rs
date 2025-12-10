@@ -48,10 +48,12 @@ impl AxiomGenerator {
                     .find(|variant| variant.name == constructor_name)
                     .and_then(|variant| variant.fields.get(field_index).cloned())
             })
-            .expect(&format!(
-                "Failed to find constructor {} at index {}",
-                constructor_name, field_index
-            ))
+            .unwrap_or_else(|| {
+                panic!(
+                    "Failed to find constructor {} at index {}",
+                    constructor_name, field_index
+                )
+            })
     }
 
     /// Extract a single expression from results with validation.
@@ -218,7 +220,12 @@ impl AxiomGenerator {
                     .extract_exprs_with_steps(vec![expression])
                     .unwrap_or_else(|e| panic!("UnaryOp operand: {}", e));
 
-                assert_eq!(exprs.len(), 1, "UnaryOp requires exactly 1 expression");
+                assert_eq!(
+                    exprs.len(),
+                    1,
+                    "UnaryOp requires exactly 1 expression, got {}",
+                    exprs.len()
+                );
 
                 let mut proposition_steps = preceding_steps_list.concat();
                 proposition_steps.push(Proposition::Expr(Expression::UnaryOp(
@@ -236,7 +243,12 @@ impl AxiomGenerator {
                     .extract_exprs_with_steps(vec![&expression, &expression1])
                     .unwrap_or_else(|e| panic!("BinaryOp operand: {}", e));
 
-                assert_eq!(exprs.len(), 2, "BinaryOp requires exactly 2 expressions");
+                assert_eq!(
+                    exprs.len(),
+                    2,
+                    "BinaryOp requires exactly 2 expressions, got {}",
+                    exprs.len()
+                );
 
                 let mut proposition_steps = preceding_steps_list.concat();
                 proposition_steps.push(Proposition::Expr(Expression::BinaryOp(
@@ -256,7 +268,10 @@ impl AxiomGenerator {
 
                 let func_name = match func_body_data {
                     Expression::Variable(v) => v,
-                    _ => panic!("Not sure yet"),
+                    _ => panic!(
+                        "Application function must evaluate to a variable, got: {:?}",
+                        func_body_data
+                    ),
                 };
 
                 // Create a wrapper predicate with an existential parameter for function applications
@@ -281,8 +296,9 @@ impl AxiomGenerator {
                 let mut additional_parameters = arg_params;
                 additional_parameters.push(Parameter::existential(
                     exists_var,
-                    func_return_type
-                        .unwrap_or_else(|| panic!("Function '{}' type not registered", func_name)),
+                    func_return_type.unwrap_or_else(|| {
+                        panic!("Function '{}' type not registered", func_name)
+                    }),
                 ));
 
                 vec![BodyPropositionData {
@@ -300,7 +316,7 @@ impl AxiomGenerator {
                 let mut results = vec![];
                 for (pattern, branch_expr) in cases {
                     let branch_results = self.from_expression(branch_expr);
-                    let result_toggle = branch_results.len() == 1;
+                    let single_result_branch = branch_results.len() == 1;
                     for branch_body_data in branch_results {
                         let pattern_vars = self.vars_from_pattern(pattern);
                         let pattern_constraint = Proposition::Expr(Expression::BinaryOp(
@@ -308,26 +324,23 @@ impl AxiomGenerator {
                             crate::prog_ir::BinaryOp::Eq,
                             Box::new(self.expr_from_pattern(pattern)),
                         ));
-                        let final_steps = if result_toggle {
+
+                        // If this branch produced a single result, compare final expression against RESULT_PARAM
+                        // Otherwise, include all steps from the branch
+                        let mut final_steps = vec![pattern_constraint.clone()];
+                        if single_result_branch {
                             let (last, rest) =
                                 branch_body_data.proposition_steps.split_last().unwrap();
-                            let mut bop = rest.to_vec();
-                            bop.push(Proposition::Expr(
-                                Expression::BinaryOp(
-                                    Box::new(last.as_expr().clone()),
-                                    crate::prog_ir::BinaryOp::Eq,
-                                    Box::new(Expression::Variable(RESULT_PARAM.into())),
-                                ), /*   Box::new(.clone()),
-                                   Box::new(Proposition::Expr()), */
-                            ));
-                            let mut steps = vec![pattern_constraint.clone()];
-                            steps.extend(bop);
-                            steps
+                            final_steps.extend(rest.to_vec());
+                            final_steps.push(Proposition::Expr(Expression::BinaryOp(
+                                Box::new(last.as_expr().clone()),
+                                crate::prog_ir::BinaryOp::Eq,
+                                Box::new(Expression::Variable(RESULT_PARAM.into())),
+                            )));
                         } else {
-                            let mut steps = vec![pattern_constraint.clone()];
-                            steps.extend(branch_body_data.proposition_steps);
-                            steps
-                        };
+                            final_steps.extend(branch_body_data.proposition_steps);
+                        }
+
                         let mut all_vars = Parameter::from_vars(&pattern_vars);
                         all_vars.extend(branch_body_data.additional_parameters);
                         results.push(BodyPropositionData {
@@ -348,7 +361,12 @@ impl AxiomGenerator {
                     .extract_exprs_with_steps(vec![condition, then_branch, else_branch])
                     .unwrap_or_else(|e| panic!("IfThenElse expression: {}", e));
 
-                assert_eq!(exprs.len(), 3, "IfThenElse requires exactly 3 expressions");
+                assert_eq!(
+                    exprs.len(),
+                    3,
+                    "IfThenElse requires exactly 3 expressions, got {}",
+                    exprs.len()
+                );
 
                 // Flatten all preceding steps from all three branches
                 let mut all_steps = preceding_steps_list.concat();
