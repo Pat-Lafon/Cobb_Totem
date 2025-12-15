@@ -395,4 +395,38 @@ mod tests {
         
         test_helpers::validate_axioms(parsed_nodes, axioms);
     }
+
+    #[test]
+    fn test_generate_axioms_from_bst_functions() {
+        use crate::axiom_generator::AxiomGenerator;
+        use crate::create_wrapper;
+
+        let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree\n\n    let [@simp] [@grind] rec lower_bound (t : tree) (x : int) : bool =\n  match t with\n  | Leaf -> true\n  | Node (y, l, r) -> x <= y && lower_bound l x && lower_bound r x\n\n    let [@simp] [@grind] rec upper_bound (t : tree) (x : int) : bool =\n  match t with\n  | Leaf -> true\n  | Node (y, l, r) -> y <= x && upper_bound l x && upper_bound r x\n\n    let [@simp] [@grind] rec bst (t : tree) : bool =\n  match t with\n  | Leaf -> true\n  | Node (x, l, r) -> bst l && bst r && upper_bound l x && lower_bound r x";
+        
+        let mut parsed_nodes = test_helpers::parse_program(program_str);
+        let lower_bound_fn = test_helpers::find_function(&parsed_nodes, "lower_bound");
+        let upper_bound_fn = test_helpers::find_function(&parsed_nodes, "upper_bound");
+        let bst_fn = test_helpers::find_function(&parsed_nodes, "bst");
+        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
+
+        let mut generator = AxiomGenerator::new(type_constructors);
+        generator.prepare_function(&lower_bound_fn).expect("Failed to prepare lower_bound");
+        generator.prepare_function(&upper_bound_fn).expect("Failed to prepare upper_bound");
+        generator.prepare_function(&bst_fn).expect("Failed to prepare bst");
+
+        let builder = generator.build_all();
+        let axioms = builder
+            .with_proof(|a| a.suggest_proof_tactic())
+            .build()
+            .expect("Failed to generate axioms");
+
+        let lower_bound_wrapper = create_wrapper::create_wrapper(&lower_bound_fn);
+        let upper_bound_wrapper = create_wrapper::create_wrapper(&upper_bound_fn);
+        let bst_wrapper = create_wrapper::create_wrapper(&bst_fn);
+        parsed_nodes.push(AstNode::LetBinding(lower_bound_wrapper));
+        parsed_nodes.push(AstNode::LetBinding(upper_bound_wrapper));
+        parsed_nodes.push(AstNode::LetBinding(bst_wrapper));
+        
+        test_helpers::validate_axioms(parsed_nodes, axioms);
+    }
 }

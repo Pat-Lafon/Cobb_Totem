@@ -28,14 +28,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)"; */
 
-    let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
+    /* let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
 
     let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)
 
     let [@simp] [@grind] rec complete (t : tree) : bool =
   match t with
   | Leaf -> true
-  | Node (x, l, r) -> complete l && complete r && height l = height r";
+  | Node (x, l, r) -> complete l && complete r && height l = height r"; */
+
+    let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
+
+    let [@simp] [@grind] rec lower_bound (t : tree) (x : int) : bool =
+  match t with
+  | Leaf -> true
+  | Node (y, l, r) -> x <= y && lower_bound l x && lower_bound r x
+
+    let [@simp] [@grind] rec upper_bound (t : tree) (x : int) : bool =
+  match t with
+  | Leaf -> true
+  | Node (y, l, r) -> y <= x && upper_bound l x && upper_bound r x
+
+    let [@simp] [@grind] rec bst (t : tree) : bool =
+  match t with
+  | Leaf -> true
+  | Node (x, l, r) -> bst l && bst r && upper_bound l x && lower_bound r x";
 
     let mut parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
     /*     assert_eq!(
