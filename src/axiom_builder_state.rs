@@ -2,27 +2,24 @@ use itertools::Itertools as _;
 
 use crate::VarName;
 use crate::create_wrapper::{RESULT_PARAM, wrapper_name};
-use crate::prog_ir::{LetBinding, Type, TypeDecl};
+use crate::prog_ir::{LetBinding, TypeDecl};
 use crate::spec_ir::{Axiom, Expression, Parameter, Proposition, Quantifier};
 
 /// Data for a single axiom body with its parameters
 /// The proposition_steps are composed into an implication chain during axiom generation
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct BodyPropositionData {
     pub proposition_steps: Vec<Proposition>,
     pub additional_parameters: Vec<Parameter>,
 }
 
 /// Intermediate builder state for axiom generation
-/// Separates the analysis phase from the generation phase, allowing
-/// flexible generation of different axiom variants
+/// Separates the analysis phase from the generation phase
 pub struct AxiomBuilderState {
     /// Type constructors for analysis
     pub type_constructors: Vec<TypeDecl>,
-    /// The function binding being analyzed
-    pub function_binding: LetBinding,
-    /// Body propositions with their associated parameters
-    pub body_propositions: Vec<BodyPropositionData>,
+    /// Functions with their body propositions for batch processing
+    pub prepared: Vec<(LetBinding, Vec<BodyPropositionData>)>,
     /// Optional closure to determine proof technique for each axiom
     pub proof: Option<Box<dyn Fn(&Axiom) -> String>>,
 }
@@ -31,24 +28,20 @@ impl std::fmt::Debug for AxiomBuilderState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("AxiomBuilderState")
             .field("type_constructors", &self.type_constructors)
-            .field("function_binding", &self.function_binding)
-            .field("body_propositions", &self.body_propositions)
+            .field("prepared", &self.prepared)
             .field("proof", &self.proof.as_ref().map(|_| "<closure>"))
             .finish()
     }
 }
 
 impl AxiomBuilderState {
-    /// Create a new AxiomBuilderState
     pub fn new(
         type_constructors: Vec<TypeDecl>,
-        function_binding: LetBinding,
-        body_propositions: Vec<BodyPropositionData>,
+        prepared: Vec<(LetBinding, Vec<BodyPropositionData>)>,
     ) -> Self {
         Self {
             type_constructors,
-            function_binding,
-            body_propositions,
+            prepared,
             proof: None,
         }
     }
@@ -62,121 +55,82 @@ impl AxiomBuilderState {
         self
     }
 
-    /// Helper: extract return type from the stored function binding
-    /// Panics if return_type is None (should be validated in prepare_function)
-    pub fn return_type(&self) -> Type {
-        self.function_binding
-            .return_type
-            .clone()
-            .expect("return_type must be Some after prepare_function validation")
-    }
-
-    /// Apply proof function to axioms
-    fn apply_proof(&self, mut axioms: Vec<Axiom>) -> Vec<Axiom> {
-        if let Some(ref proof_fn) = self.proof {
-            for axiom in &mut axioms {
-                axiom.proof = Some(proof_fn(axiom));
-            }
+    /// Build forward axiom for a given binding and body proposition
+    fn build_forward_axiom_for<F>(
+        &self,
+        binding: &LetBinding,
+        idx: usize,
+        body_prop: &BodyPropositionData,
+        proof_fn: &F,
+    ) -> Axiom
+    where
+        F: Fn(&Axiom) -> String,
+    {
+        // Build implication chain from proposition steps
+        let mut steps_body = body_prop.proposition_steps.last().unwrap().clone();
+        for step in body_prop.proposition_steps[..body_prop.proposition_steps.len() - 1]
+            .iter()
+            .rev()
+        {
+            steps_body = Proposition::Implication(Box::new(step.clone()), Box::new(steps_body));
         }
-        axioms
+
+        let wrapper_params = self.build_wrapper_params_for(binding);
+        let body = Proposition::Implication(
+            Box::new(Proposition::Predicate(
+                wrapper_name(&binding.name),
+                wrapper_params,
+            )),
+            Box::new(steps_body),
+        );
+
+        let params = self.build_and_partition_params_for(binding, &body_prop.additional_parameters);
+
+        let mut axiom = Axiom {
+            name: format!("{}_{}", binding.name, idx),
+            params,
+            body,
+            proof: None,
+        };
+
+        axiom.proof = Some(proof_fn(&axiom));
+        axiom
     }
 
-    /// Generate forward axioms with integrated wrapper predicate handling
-    pub fn build_forward_with_wrapper(&self) -> Result<Vec<Axiom>, String> {
-        let axioms: Vec<Axiom> = self
-            .body_propositions
-            .iter()
-            .enumerate()
-            .map(|(idx, body_prop)| {
-                // Build implication chain from proposition steps
-                let mut steps_body = body_prop.proposition_steps.last().unwrap().clone();
-                for step in body_prop.proposition_steps[..body_prop.proposition_steps.len() - 1]
-                    .iter()
-                    .rev()
-                {
-                    steps_body =
-                        Proposition::Implication(Box::new(step.clone()), Box::new(steps_body));
-                }
+    /// Build reverse axiom for a given binding and body proposition
+    fn build_reverse_axiom_for<F>(
+        &self,
+        binding: &LetBinding,
+        idx: usize,
+        body_prop: &BodyPropositionData,
+        proof_fn: &F,
+    ) -> Axiom
+    where
+        F: Fn(&Axiom) -> String,
+    {
+        let wrapper_params = self.build_wrapper_params_for(binding);
+        let mut steps_body = Proposition::Predicate(wrapper_name(&binding.name), wrapper_params);
 
-                let wrapper_params = self.build_wrapper_params();
-                let body = Proposition::Implication(
-                    Box::new(Proposition::Predicate(
-                        wrapper_name(&self.function_binding.name),
-                        wrapper_params,
-                    )),
-                    Box::new(steps_body),
-                );
+        for step in body_prop.proposition_steps.iter().rev() {
+            steps_body = Proposition::Implication(Box::new(step.clone()), Box::new(steps_body));
+        }
 
-                let (mut params, ext) = self.build_and_partition_params(&body_prop.additional_parameters);
-                params.extend(ext);
+        let params = self.build_and_partition_params_for(binding, &body_prop.additional_parameters);
 
-                Axiom {
-                    name: format!("{}_{}", self.function_binding.name, idx),
-                    params,
-                    body,
-                    proof: None,
-                }
-            })
-            .collect();
+        let mut axiom = Axiom {
+            name: format!("{}_{}_rev", binding.name, idx),
+            params,
+            body: steps_body,
+            proof: None,
+        };
 
-        let axioms = self.apply_proof(axioms);
-        self.validate_axioms(&axioms)?;
-        Ok(axioms)
+        axiom.proof = Some(proof_fn(&axiom));
+        axiom
     }
 
-    /// Generate reverse axioms with integrated wrapper predicate handling
-    pub fn build_reverse_with_wrapper(&self) -> Result<Vec<Axiom>, String> {
-        let axioms: Vec<Axiom> = self
-            .body_propositions
-            .iter()
-            .enumerate()
-            .map(|(idx, body_prop)| {
-                let wrapper_params = self.build_wrapper_params();
-                let mut steps_body = Proposition::Predicate(
-                    wrapper_name(&self.function_binding.name),
-                    wrapper_params,
-                );
-
-                for step in body_prop.proposition_steps.iter().rev() {
-                    steps_body =
-                        Proposition::Implication(Box::new(step.clone()), Box::new(steps_body));
-                }
-
-                let (mut params, ext) = self.build_and_partition_params(&body_prop.additional_parameters);
-                params.extend(ext);
-
-                Axiom {
-                    name: format!("{}_{}_rev", self.function_binding.name, idx),
-                    params,
-                    body: steps_body,
-                    proof: None,
-                }
-            })
-            .collect();
-
-        let axioms = self.apply_proof(axioms);
-        self.validate_axioms(&axioms)?;
-        Ok(axioms)
-    }
-
-    /// Generate both forward and reverse axioms with wrapper
-    pub fn build_both(&self) -> Result<Vec<Axiom>, String> {
-        let forward = self.build_forward_with_wrapper()?;
-        let reverse = self.build_reverse_with_wrapper()?;
-        Ok([forward, reverse].concat())
-    }
-
-    /// Create a wrapper function for the stored function binding and cache it
-    pub fn create_wrapper(&mut self) -> LetBinding {
-        use crate::create_wrapper;
-        let binding = create_wrapper::create_wrapper(&self.function_binding);
-        binding
-    }
-
-    /// Build wrapper predicate parameters with the result parameter
-    fn build_wrapper_params(&self) -> Vec<Expression> {
-        let mut params = self
-            .function_binding
+    /// Build wrapper predicate parameters for a given binding
+    fn build_wrapper_params_for(&self, binding: &LetBinding) -> Vec<Expression> {
+        let mut params = binding
             .params
             .iter()
             .map(|p| Expression::Variable(p.0.clone()))
@@ -185,12 +139,13 @@ impl AxiomBuilderState {
         params
     }
 
-    /// Build and partition parameters (universal and existential)
-    fn build_and_partition_params(
+    /// Build and partition parameters for a given binding
+    fn build_and_partition_params_for(
         &self,
+        binding: &LetBinding,
         additional_parameters: &[Parameter],
-    ) -> (Vec<Parameter>, Vec<Parameter>) {
-        let mut params = Parameter::from_vars(&self.function_binding.params);
+    ) -> Vec<Parameter> {
+        let mut params = Parameter::from_vars(&binding.params);
         let (uni, ext): (Vec<_>, Vec<_>) = additional_parameters
             .iter()
             .cloned()
@@ -199,23 +154,63 @@ impl AxiomBuilderState {
         params.extend(uni);
         params.push(Parameter::universal(
             VarName::new(RESULT_PARAM),
-            self.return_type(),
+            binding
+                .return_type
+                .clone()
+                .expect("return_type must be Some after prepare_function validation"),
         ));
-        (params, ext)
+        params.extend(ext);
+        params
     }
 
-    /// Validate that all variables in axioms are declared as parameters
-    /// and that all universal quantifiers come before existential quantifiers
-    fn validate_axioms(&self, axioms: &[Axiom]) -> Result<(), String> {
-        axioms.iter().try_for_each(|axiom| axiom.validate())
+    /// Build both forward and reverse axioms for a given binding and body propositions
+    fn build_axioms_for<F>(
+        &self,
+        binding: &LetBinding,
+        body_props: &[BodyPropositionData],
+        proof_fn: &F,
+    ) -> Result<Vec<Axiom>, String>
+    where
+        F: Fn(&Axiom) -> String,
+    {
+        let mut axioms = Vec::new();
+
+        // Forward axioms
+        axioms.extend(body_props.iter().enumerate().map(|(idx, body_prop)| {
+            self.build_forward_axiom_for(binding, idx, body_prop, proof_fn)
+        }));
+
+        // Reverse axioms
+        axioms.extend(body_props.iter().enumerate().map(|(idx, body_prop)| {
+            self.build_reverse_axiom_for(binding, idx, body_prop, proof_fn)
+        }));
+
+        Ok(axioms)
+    }
+
+    /// Build all axioms from the stored prepared functions
+    pub fn build(&self) -> Result<Vec<Axiom>, String> {
+        let proof_fn = self
+            .proof
+            .as_ref()
+            .ok_or_else(|| "No proof function available. Use with_proof()".to_string())?;
+
+        let mut axioms = Vec::new();
+
+        for (binding, body_propositions) in &self.prepared {
+            axioms.extend(self.build_axioms_for(binding, body_propositions, proof_fn)?);
+        }
+
+        axioms.iter().try_for_each(|axiom| axiom.validate())?;
+        Ok(axioms)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::ToLean;
-    use crate::test_helpers;
     use crate::prog_ir::AstNode;
+    use crate::test_helpers;
 
     #[test]
     fn test_generate_axioms_from_length_function() {
@@ -227,7 +222,8 @@ mod tests {
     | Nil -> 0
     | Cons (x, xs) -> 1 + len xs";
 
-        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "len");
+        let (mut parsed_nodes, axioms, wrapper) =
+            test_helpers::generate_axioms_with_wrapper(program_str, "len");
         assert_eq!(axioms.len(), 4);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -236,7 +232,8 @@ mod tests {
     #[test]
     fn test_generate_axioms_from_sorted_function() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (x, xs) -> match xs with | Nil -> true | Cons (y, ys) -> (x <= y) && sorted xs";
-        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "sorted");
+        let (mut parsed_nodes, axioms, wrapper) =
+            test_helpers::generate_axioms_with_wrapper(program_str, "sorted");
         assert_eq!(axioms.len(), 6);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -283,7 +280,8 @@ mod tests {
     #[test]
     fn test_generate_axioms_from_mem_function() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t";
-        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "mem");
+        let (mut parsed_nodes, axioms, wrapper) =
+            test_helpers::generate_axioms_with_wrapper(program_str, "mem");
         assert_eq!(axioms.len(), 4);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -292,7 +290,8 @@ mod tests {
     #[test]
     fn test_generate_axioms_from_all_eq_function() {
         let program_str = "type [@grind] ilist = Nil | Cons of int * ilist\nlet [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons (h, t) -> (h = x) && all_eq t x";
-        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "all_eq");
+        let (mut parsed_nodes, axioms, wrapper) =
+            test_helpers::generate_axioms_with_wrapper(program_str, "all_eq");
         assert_eq!(axioms.len(), 4);
         assert_eq!(axioms[0].params.len(), 3);
         assert_eq!(axioms[1].params.len(), 6);
@@ -308,7 +307,8 @@ mod tests {
             match t with
             | Leaf -> true
             | Node (y, l, r) -> x <= y && lower_bound l x && lower_bound r x";
-        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "lower_bound");
+        let (mut parsed_nodes, axioms, wrapper) =
+            test_helpers::generate_axioms_with_wrapper(program_str, "lower_bound");
         assert_eq!(axioms.len(), 4);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -322,7 +322,8 @@ mod tests {
             match t with
             | Leaf -> true
             | Node (y, l, r) -> y <= x && upper_bound l x && upper_bound r x";
-        let (mut parsed_nodes, axioms, wrapper) = test_helpers::generate_axioms_with_wrapper(program_str, "upper_bound");
+        let (mut parsed_nodes, axioms, wrapper) =
+            test_helpers::generate_axioms_with_wrapper(program_str, "upper_bound");
         assert_eq!(axioms.len(), 4);
         parsed_nodes.push(AstNode::LetBinding(wrapper));
         test_helpers::validate_axioms(parsed_nodes, axioms);

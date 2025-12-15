@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::VarName;
 use crate::axiom_builder_state::{AxiomBuilderState, BodyPropositionData};
 use crate::create_wrapper::{RESULT_PARAM, wrapper_name};
@@ -5,14 +7,15 @@ use crate::prog_ir::{LetBinding, Type, TypeDecl};
 use crate::spec_ir::{Expression, Parameter, Proposition};
 
 /// Generates axioms in the spec IR from parsed program IR functions.
-#[derive(Clone)]
 pub struct AxiomGenerator {
     /// Type declarations for looking up constructor types
     type_constructors: Vec<TypeDecl>,
     /// Counter for generating unique variable names (e.g., res_0, res_1, ...)
     var_counter: usize,
     /// Map of function names to their return types
-    function_types: std::collections::HashMap<VarName, Type>,
+    function_types: HashMap<VarName, Type>,
+    /// Accumulated functions and their body propositions
+    prepared: Vec<(LetBinding, Vec<BodyPropositionData>)>,
 }
 
 impl AxiomGenerator {
@@ -21,7 +24,8 @@ impl AxiomGenerator {
         Self {
             type_constructors,
             var_counter: 0,
-            function_types: std::collections::HashMap::new(),
+            function_types: HashMap::new(),
+            prepared: Vec::new(),
         }
     }
 
@@ -35,6 +39,12 @@ impl AxiomGenerator {
     /// Get the registered return type for a function, if available
     fn get_function_type(&self, name: &VarName) -> Option<&Type> {
         self.function_types.get(name)
+    }
+
+    #[cfg(test)]
+    /// Get the prepared functions and their body propositions (test only)
+    pub(crate) fn get_prepared(&self) -> &[(LetBinding, Vec<BodyPropositionData>)] {
+        &self.prepared
     }
 
     /// Look up the type of a constructor parameter by constructor name and field index
@@ -167,8 +177,8 @@ impl AxiomGenerator {
         }
     }
 
-    /// Analyze a function and return an intermediate builder state
-    pub fn prepare_function(&mut self, binding: &LetBinding) -> Result<AxiomBuilderState, String> {
+    /// Prepare a function for batch axiom generation
+    pub fn prepare_function(&mut self, binding: &LetBinding) -> Result<(), String> {
         // Validate that binding has a return type annotation
         if binding.return_type.is_none() {
             return Err(format!(
@@ -180,12 +190,8 @@ impl AxiomGenerator {
         self.function_types
             .insert(binding.name.clone(), binding.return_type.clone().unwrap());
         let body_propositions = self.from_expression(&binding.body);
-
-        Ok(AxiomBuilderState::new(
-            self.type_constructors.clone(),
-            binding.clone(),
-            body_propositions,
-        ))
+        self.prepared.push((binding.clone(), body_propositions));
+        Ok(())
     }
 
     /// Analyze expressions, building propositions
@@ -296,9 +302,8 @@ impl AxiomGenerator {
                 let mut additional_parameters = arg_params;
                 additional_parameters.push(Parameter::existential(
                     exists_var,
-                    func_return_type.unwrap_or_else(|| {
-                        panic!("Function '{}' type not registered", func_name)
-                    }),
+                    func_return_type
+                        .unwrap_or_else(|| panic!("Function '{}' type not registered", func_name)),
                 ));
 
                 vec![BodyPropositionData {
@@ -385,6 +390,15 @@ impl AxiomGenerator {
             }
             crate::prog_ir::Expression::Tuple(_expressions) => todo!(),
         }
+    }
+
+    /// Build a configured AxiomBuilderState from all prepared functions
+    /// The builder contains the prepared functions and can be used to generate axioms
+    pub fn build_all(&self) -> AxiomBuilderState {
+        AxiomBuilderState::new(
+            self.type_constructors.clone(),
+            self.prepared.clone(),
+        )
     }
 }
 

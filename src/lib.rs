@@ -140,15 +140,21 @@ mod test_helpers {
         let type_decls = extract_type_decls(&parsed_nodes);
 
         let mut generator = AxiomGenerator::new(type_decls);
-
-        let builder = generator
+        generator
             .prepare_function(&function)
             .expect("Failed to prepare function");
-        builder
-            .body_propositions
+
+        generator
+            .get_prepared()
             .iter()
-            .map(|axiom| axiom.proposition_steps.clone())
-            .collect()
+            .find(|(binding, _)| binding.name == function.name)
+            .map(|(_, props)| {
+                props
+                    .iter()
+                    .map(|axiom| axiom.proposition_steps.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     /// Generate complete axioms with wrapper from a program string and function name
@@ -156,19 +162,27 @@ mod test_helpers {
         program_str: &str,
         func_name: &str,
     ) -> (Vec<AstNode>, Vec<crate::spec_ir::Axiom>, LetBinding) {
+        use crate::create_wrapper;
+
         let parsed_nodes = parse_program(program_str);
         let function = find_function(&parsed_nodes, func_name);
         let type_constructors = extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
-        let mut builder = generator
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
+        generator
             .prepare_function(&function)
             .expect("Failed to prepare function");
-        let wrapper = builder.create_wrapper();
+
+        // Create wrapper
+        let wrapper = create_wrapper::create_wrapper(&function);
+
+        // Build axioms with proof tactic
+        let builder = generator.build_all();
         let axioms = builder
             .with_proof(|a| a.suggest_proof_tactic())
-            .build_both()
+            .build()
             .expect("Failed to generate axioms");
+
         (parsed_nodes, axioms, wrapper)
     }
 
