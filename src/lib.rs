@@ -101,11 +101,6 @@ mod test_helpers {
     /// Parse program string and extract type and function definitions
     pub fn parse_program(program_str: &str) -> Vec<AstNode> {
         let nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
-        assert_eq!(
-            nodes.len(),
-            2,
-            "Expected exactly two nodes (type + function)"
-        );
         nodes
     }
 

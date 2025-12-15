@@ -365,4 +365,34 @@ mod tests {
             "mem_1_rev axiom has incorrect structure"
         );
     }
+
+    #[test]
+    fn test_generate_axioms_from_height_and_complete_functions() {
+        use crate::axiom_generator::AxiomGenerator;
+        use crate::create_wrapper;
+
+        let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree\n\nlet [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)\n\nlet [@simp] [@grind] rec complete (t : tree) : bool = match t with | Leaf -> true | Node (x, l, r) -> complete l && complete r && height l = height r";
+        
+        let mut parsed_nodes = test_helpers::parse_program(program_str);
+        let height_fn = test_helpers::find_function(&parsed_nodes, "height");
+        let complete_fn = test_helpers::find_function(&parsed_nodes, "complete");
+        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
+
+        let mut generator = AxiomGenerator::new(type_constructors);
+        generator.prepare_function(&height_fn).expect("Failed to prepare height");
+        generator.prepare_function(&complete_fn).expect("Failed to prepare complete");
+
+        let builder = generator.build_all();
+        let axioms = builder
+            .with_proof(|a| a.suggest_proof_tactic())
+            .build()
+            .expect("Failed to generate axioms");
+
+        let height_wrapper = create_wrapper::create_wrapper(&height_fn);
+        let complete_wrapper = create_wrapper::create_wrapper(&complete_fn);
+        parsed_nodes.push(AstNode::LetBinding(height_wrapper));
+        parsed_nodes.push(AstNode::LetBinding(complete_wrapper));
+        
+        test_helpers::validate_axioms(parsed_nodes, axioms);
+    }
 }
