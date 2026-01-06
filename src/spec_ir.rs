@@ -85,12 +85,18 @@ pub enum Expression {
     /// Constructor application: .Cons x .Nil
     Constructor(ConstructorName, Vec<Expression>),
 
+    /// Tuple expression: (e1, e2, e3, ...)
+    Tuple(Vec<Expression>),
+
     /// If-then-else expression: ite cond then_expr else_expr
     IfThenElse {
         condition: Box<Expression>,
         then_branch: Box<Expression>,
         else_branch: Box<Expression>,
     },
+
+    /// Logical negation: not expr
+    Not(Box<Expression>),
 }
 
 impl Parameter {
@@ -390,12 +396,26 @@ impl fmt::Display for Expression {
                     Proposition::format_constructor(name, args, |e| e.to_string())
                 )
             }
+            Expression::Tuple(elements) => {
+                write!(
+                    f,
+                    "({})",
+                    elements
+                        .iter()
+                        .map(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
             Expression::IfThenElse {
                 condition,
                 then_branch,
                 else_branch,
             } => {
                 write!(f, "(ite {} {} {})", condition, then_branch, else_branch)
+            }
+            Expression::Not(expr) => {
+                write!(f, "(not {})", expr)
             }
         }
     }
@@ -415,6 +435,16 @@ impl ToLean for Expression {
             Expression::Constructor(name, args) => {
                 Proposition::format_constructor(name, args, |e| e.to_lean())
             }
+            Expression::Tuple(elements) => {
+                format!(
+                    "({})",
+                    elements
+                        .iter()
+                        .map(|e| e.to_lean())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
             Expression::IfThenElse {
                 condition,
                 then_branch,
@@ -426,6 +456,9 @@ impl ToLean for Expression {
                     then_branch.to_lean(),
                     else_branch.to_lean()
                 )
+            }
+            Expression::Not(expr) => {
+                format!("(not {})", expr.to_lean())
             }
         }
     }

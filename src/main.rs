@@ -37,7 +37,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
   | Leaf -> true
   | Node (x, l, r) -> complete l && complete r && height l = height r"; */
 
-    let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
+    /* let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
 
     let [@simp] [@grind] rec lower_bound (t : tree) (x : int) : bool =
   match t with
@@ -52,7 +52,46 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let [@simp] [@grind] rec bst (t : tree) : bool =
   match t with
   | Leaf -> true
-  | Node (x, l, r) -> bst l && bst r && upper_bound l x && lower_bound r x";
+  | Node (x, l, r) -> bst l && bst r && upper_bound l x && lower_bound r x"; */
+
+    let program_str = "type [@grind] rbtree = Rbtleaf | Rbtnode of bool * rbtree * int * rbtree
+
+    let [@simp] [@grind] rec num_black (t : rbtree) (h : int) : bool =
+      match t with
+      | Rbtleaf -> h = 0
+      | Rbtnode (c, l, v, r) ->
+          if c then num_black l (h - 1) && num_black r (h - 1)
+          else num_black l h && num_black r h
+
+    let [@simp] [@grind] rec no_red_red (t : rbtree) : bool =
+      match t with
+      | Rbtleaf -> true
+      | Rbtnode (c, l, v, r) ->
+          if not c then no_red_red l && no_red_red r
+          else
+            match (l, r) with
+            | Rbtnode (c', l1, v1, r1), Rbtnode (c'', l2, v2, r2) ->
+                (not c') && (not c'') && no_red_red l && no_red_red r
+            | Rbtnode (c', l1, v1, r1), Rbtleaf -> (not c') && no_red_red l
+            | Rbtleaf, Rbtnode (c'', l2, v2, r2) -> (not c'') && no_red_red r
+            | Rbtleaf, Rbtleaf -> true
+
+    let [@simp] [@grind] rec rb_root_color (t : rbtree) (c : bool) : bool =
+      match t with Rbtleaf -> false | Rbtnode (c', l, v, r) -> c = c'
+
+    let [@simp] [@grind] rec rbtree_invariant (t : rbtree) (h : int) : bool =
+      match t with
+      | Rbtleaf -> h = 0
+      | Rbtnode (c, l, v, r) ->
+          if not c then rbtree_invariant l (h - 1) && rbtree_invariant r (h - 1)
+          else
+            ((not (rb_root_color l true)) && not (rb_root_color r true))
+            && rbtree_invariant l h && rbtree_invariant r h
+
+    let [@simp] [@grind] rec rbdepth (t : rbtree) : int =
+      match t with
+      | Rbtleaf -> 0
+      | Rbtnode (c, l, v, r) -> 1 + ite (rbdepth l > rbdepth r) (rbdepth l) (rbdepth r)";
 
     let mut parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
     /*     assert_eq!(

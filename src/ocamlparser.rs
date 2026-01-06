@@ -488,6 +488,7 @@ impl OcamlParser {
     fn parse_expression(&self, node: Node) -> Expression {
         match node.kind() {
             "match_expression" => self.parse_match_expression_node(node),
+            "if_expression" => self.parse_if_expression(node),
             "parenthesized_expression" => {
                 let mut cursor = node.walk();
                 assert!(
@@ -532,7 +533,7 @@ impl OcamlParser {
                 let text = node
                     .utf8_text(self.source.as_bytes())
                     .expect("Failed to extract identifier text");
-                let valid_var = text.chars().all(|c| c.is_alphanumeric() || c == '_')
+                let valid_var = text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
                     && text
                         .chars()
                         .next()
@@ -711,6 +712,14 @@ impl OcamlParser {
                         then_branch: Box::new(args[1].clone()),
                         else_branch: Box::new(args[2].clone()),
                     }
+                } else if &**name == "not" {
+                    assert_eq!(
+                        args.len(),
+                        1,
+                        "not requires exactly 1 argument, got {}",
+                        args.len()
+                    );
+                    Expression::Not(Box::new(args[0].clone()))
                 } else {
                     Expression::Application(Box::new(func), args)
                 }
@@ -722,7 +731,8 @@ impl OcamlParser {
             | Expression::UnaryOp(_, _)
             | Expression::BinaryOp(_, _, _)
             | Expression::Tuple(_)
-            | Expression::IfThenElse { .. } => {
+            | Expression::IfThenElse { .. }
+            | Expression::Not(_) => {
                 panic!("Cannot apply non-function expression as a function")
             }
         }
@@ -787,6 +797,16 @@ impl OcamlParser {
                     "Expected single pattern in parenthesized_pattern"
                 );
                 patterns.into_iter().next().unwrap()
+            }
+            "tuple_pattern" => {
+                // Handle tuple patterns that appear at top-level (not wrapped in parens)
+                let patterns = self.parse_tuple_pattern(node);
+                if patterns.len() == 1 {
+                    patterns.into_iter().next().unwrap()
+                } else {
+                    // Multiple patterns in a tuple
+                    Pattern::Tuple(patterns)
+                }
             }
             kind => {
                 panic!("Unexpected pattern node kind: '{}'", kind);
@@ -865,6 +885,81 @@ impl OcamlParser {
         patterns
     }
 
+    fn parse_if_expression(&self, node: Node) -> Expression {
+         let mut cursor = node.walk();
+         assert!(
+             cursor.goto_first_child(),
+             "If expression has no children"
+         );
+
+         let if_keyword = cursor.node();
+         assert_eq!(if_keyword.kind(), "if");
+
+         // Next should be the condition expression
+         assert!(
+             cursor.goto_next_sibling(),
+             "If expression missing condition"
+         );
+         let condition_node = cursor.node();
+         let condition = self.parse_expression(condition_node);
+
+         // Next should be 'then_clause'
+         assert!(
+             cursor.goto_next_sibling(),
+             "If expression missing 'then_clause'"
+         );
+         let then_clause = cursor.node();
+         assert_eq!(then_clause.kind(), "then_clause");
+
+         // Parse the then_clause to get the expression
+         let mut then_cursor = then_clause.walk();
+         assert!(
+             then_cursor.goto_first_child(),
+             "then_clause has no children"
+         );
+
+         let then_keyword = then_cursor.node();
+         assert_eq!(then_keyword.kind(), "then");
+
+         assert!(
+             then_cursor.goto_next_sibling(),
+             "then_clause missing expression after 'then'"
+         );
+         let then_branch_node = then_cursor.node();
+         let then_branch = self.parse_expression(then_branch_node);
+
+         // Next should be 'else_clause'
+         assert!(
+             cursor.goto_next_sibling(),
+             "If expression missing 'else_clause'"
+         );
+         let else_clause = cursor.node();
+         assert_eq!(else_clause.kind(), "else_clause");
+
+         // Parse the else_clause to get the expression
+         let mut else_cursor = else_clause.walk();
+         assert!(
+             else_cursor.goto_first_child(),
+             "else_clause has no children"
+         );
+
+         let else_keyword = else_cursor.node();
+         assert_eq!(else_keyword.kind(), "else");
+
+         assert!(
+             else_cursor.goto_next_sibling(),
+             "else_clause missing expression after 'else'"
+         );
+         let else_branch_node = else_cursor.node();
+         let else_branch = self.parse_expression(else_branch_node);
+
+         Expression::IfThenElse {
+             condition: Box::new(condition),
+             then_branch: Box::new(then_branch),
+             else_branch: Box::new(else_branch),
+         }
+     }
+
     fn parse_match_expression_node(&self, node: Node) -> Expression {
         let mut cursor = node.walk();
         assert!(
@@ -893,19 +988,32 @@ impl OcamlParser {
         let mut cases = Vec::new();
 
         // Collect all match cases
+        // First case may or may not have a leading '|' (depending on formatting)
         while cursor.goto_next_sibling() {
             let child = cursor.node();
-            assert_eq!(child.kind(), "|", "Expected '|', got '{}'", child.kind());
-            assert!(cursor.goto_next_sibling(), "Expected match_case after '|'");
-            let case_node = cursor.node();
-            assert_eq!(
-                case_node.kind(),
-                "match_case",
-                "Expected 'match_case', got '{}'",
-                case_node.kind()
-            );
-            let case = self.parse_match_case(&mut cursor);
-            cases.push(case);
+            match child.kind() {
+                "|" => {
+                    // Skip the pipe separator and move to the next match_case
+                    assert!(cursor.goto_next_sibling(), "Expected match_case after '|'");
+                    let case_node = cursor.node();
+                    assert_eq!(
+                        case_node.kind(),
+                        "match_case",
+                        "Expected 'match_case', got '{}'",
+                        case_node.kind()
+                    );
+                    let case = self.parse_match_case(&mut cursor);
+                    cases.push(case);
+                }
+                "match_case" => {
+                    // First case without leading '|' (valid OCaml syntax)
+                    let case = self.parse_match_case(&mut cursor);
+                    cases.push(case);
+                }
+                kind => {
+                    panic!("Expected '|' or 'match_case', got '{}'", kind);
+                }
+            }
         }
 
         Expression::Match(Box::new(scrutinee), cases)
@@ -1733,5 +1841,271 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest)
                 },
             )],
         );
+    }
+    #[test]
+    fn test_parse_if_then_else_with_comparison() {
+        assert_parse(
+            "let test (x : int) : int = if x = 0 then 0 else x",
+            vec![AstNode::LetBinding(LetBinding {
+                name: VarName::new("test"),
+                attributes: vec![],
+                is_recursive: false,
+                params: vec![(VarName::new("x"), Type::Int)],
+                return_type: Some(Type::Int),
+                body: Expression::IfThenElse {
+                    condition: Box::new(Expression::BinaryOp(
+                        Box::new(Expression::Variable("x".into())),
+                        BinaryOp::Eq,
+                        Box::new(Expression::Literal(Literal::Int(0))),
+                    )),
+                    then_branch: Box::new(Expression::Literal(Literal::Int(0))),
+                    else_branch: Box::new(Expression::Variable("x".into())),
+                },
+            })],
+        );
+    }
+
+    #[test]
+    fn test_parse_match_enforces_pipe_separator() {
+        // All match cases must be preceded by |
+        assert_parse(
+            "let test (x : int) : int = match x with | 0 -> 1 | 1 -> 2 | _ -> 3",
+            vec![let_binding(
+                "test",
+                vec![("x", Type::Int)],
+                Some(Type::Int),
+                Expression::Match(
+                    Box::new(Expression::Variable("x".into())),
+                    vec![
+                        (
+                            Pattern::Literal(Literal::Int(0)),
+                            Expression::Literal(Literal::Int(1)),
+                        ),
+                        (
+                            Pattern::Literal(Literal::Int(1)),
+                            Expression::Literal(Literal::Int(2)),
+                        ),
+                        (Pattern::Wildcard, Expression::Literal(Literal::Int(3))),
+                    ],
+                ),
+            )],
+        );
+    }
+
+    #[test]
+    fn test_parse_match_single_case() {
+        // Even single case must have pipe
+        assert_parse(
+            "let test (x : bool) : int = match x with | true -> 42",
+            vec![let_binding(
+                "test",
+                vec![("x", Type::Bool)],
+                Some(Type::Int),
+                Expression::Match(
+                    Box::new(Expression::Variable("x".into())),
+                    vec![(Pattern::Literal(Literal::Bool(true)), Expression::Literal(Literal::Int(42)))],
+                ),
+            )],
+        );
+    }
+
+    #[test]
+    fn test_parse_num_black() {
+        let source = "let[@simp] [@grind] rec num_black (t : rbtree) (h : int) : bool =
+      match t with
+      | Rbtleaf -> h = 0
+      | Rbtnode (c, l, _, r) ->
+          if c then num_black l (h - 1) && num_black r (h - 1)
+          else num_black l h && num_black r h";
+
+        let expected = vec![let_binding_rec(
+            "num_black",
+            vec!["simp", "grind"],
+            vec![("t", Type::Named("rbtree".to_string())), ("h", Type::Int)],
+            Some(Type::Bool),
+            Expression::Match(
+                Box::new(Expression::Variable("t".into())),
+                vec![
+                    (
+                        Pattern::Constructor(
+                            ConstructorName::Simple("Rbtleaf".to_string()),
+                            vec![],
+                        ),
+                        Expression::BinaryOp(
+                            Box::new(Expression::Variable("h".into())),
+                            BinaryOp::Eq,
+                            Box::new(Expression::Literal(Literal::Int(0))),
+                        ),
+                    ),
+                    (
+                        Pattern::Constructor(
+                            ConstructorName::Simple("Rbtnode".to_string()),
+                            vec![
+                                Pattern::Variable("c".into()),
+                                Pattern::Variable("l".into()),
+                                Pattern::Wildcard,
+                                Pattern::Variable("r".into()),
+                            ],
+                        ),
+                        Expression::IfThenElse {
+                            condition: Box::new(Expression::Variable("c".into())),
+                            then_branch: Box::new(Expression::BinaryOp(
+                                Box::new(Expression::Application(
+                                    Box::new(Expression::Variable("num_black".into())),
+                                    vec![
+                                        Expression::Variable("l".into()),
+                                        Expression::BinaryOp(
+                                            Box::new(Expression::Variable("h".into())),
+                                            BinaryOp::Sub,
+                                            Box::new(Expression::Literal(Literal::Int(1))),
+                                        ),
+                                    ],
+                                )),
+                                BinaryOp::And,
+                                Box::new(Expression::Application(
+                                    Box::new(Expression::Variable("num_black".into())),
+                                    vec![
+                                        Expression::Variable("r".into()),
+                                        Expression::BinaryOp(
+                                            Box::new(Expression::Variable("h".into())),
+                                            BinaryOp::Sub,
+                                            Box::new(Expression::Literal(Literal::Int(1))),
+                                        ),
+                                    ],
+                                )),
+                            )),
+                            else_branch: Box::new(Expression::BinaryOp(
+                                Box::new(Expression::Application(
+                                    Box::new(Expression::Variable("num_black".into())),
+                                    vec![
+                                        Expression::Variable("l".into()),
+                                        Expression::Variable("h".into()),
+                                    ],
+                                )),
+                                BinaryOp::And,
+                                Box::new(Expression::Application(
+                                    Box::new(Expression::Variable("num_black".into())),
+                                    vec![
+                                        Expression::Variable("r".into()),
+                                        Expression::Variable("h".into()),
+                                    ],
+                                )),
+                            )),
+                        },
+                    ),
+                ],
+            ),
+        )];
+
+        assert_parse(source, expected);
+    }
+
+    #[test]
+    fn test_parse_rb_root_color() {
+        let source =
+            "let[@simp] [@grind] rec rb_root_color (t : rbtree) (c : bool) : bool =
+      match t with Rbtleaf -> false | Rbtnode (c', _, _, _) -> c = c'";
+
+        let expected = vec![let_binding_rec(
+            "rb_root_color",
+            vec!["simp", "grind"],
+            vec![("t", Type::Named("rbtree".to_string())), ("c", Type::Bool)],
+            Some(Type::Bool),
+            Expression::Match(
+                Box::new(Expression::Variable("t".into())),
+                vec![
+                    (
+                        Pattern::Constructor(
+                            ConstructorName::Simple("Rbtleaf".to_string()),
+                            vec![],
+                        ),
+                        Expression::Literal(Literal::Bool(false)),
+                    ),
+                    (
+                        Pattern::Constructor(
+                            ConstructorName::Simple("Rbtnode".to_string()),
+                            vec![
+                                Pattern::Variable("c'".into()),
+                                Pattern::Wildcard,
+                                Pattern::Wildcard,
+                                Pattern::Wildcard,
+                            ],
+                        ),
+                        Expression::BinaryOp(
+                            Box::new(Expression::Variable("c".into())),
+                            BinaryOp::Eq,
+                            Box::new(Expression::Variable("c'".into())),
+                        ),
+                    ),
+                ],
+            ),
+        )];
+
+        assert_parse(source, expected);
+    }
+
+    #[test]
+    fn test_parse_rbdepth() {
+        let source = "let[@simp] [@grind] rec rbdepth (t : rbtree) : int =
+      match t with
+      | Rbtleaf -> 0
+      | Rbtnode (_, l, _, r) -> 1 + ite (rbdepth l > rbdepth r) (rbdepth l) (rbdepth r)";
+
+        let expected = vec![let_binding_rec(
+            "rbdepth",
+            vec!["simp", "grind"],
+            vec![("t", Type::Named("rbtree".to_string()))],
+            Some(Type::Int),
+            Expression::Match(
+                Box::new(Expression::Variable("t".into())),
+                vec![
+                    (
+                        Pattern::Constructor(
+                            ConstructorName::Simple("Rbtleaf".to_string()),
+                            vec![],
+                        ),
+                        Expression::Literal(Literal::Int(0)),
+                    ),
+                    (
+                        Pattern::Constructor(
+                            ConstructorName::Simple("Rbtnode".to_string()),
+                            vec![
+                                Pattern::Wildcard,
+                                Pattern::Variable("l".into()),
+                                Pattern::Wildcard,
+                                Pattern::Variable("r".into()),
+                            ],
+                        ),
+                        Expression::BinaryOp(
+                            Box::new(Expression::Literal(Literal::Int(1))),
+                            BinaryOp::Add,
+                            Box::new(Expression::IfThenElse {
+                                condition: Box::new(Expression::BinaryOp(
+                                    Box::new(Expression::Application(
+                                        Box::new(Expression::Variable("rbdepth".into())),
+                                        vec![Expression::Variable("l".into())],
+                                    )),
+                                    BinaryOp::Gt,
+                                    Box::new(Expression::Application(
+                                        Box::new(Expression::Variable("rbdepth".into())),
+                                        vec![Expression::Variable("r".into())],
+                                    )),
+                                )),
+                                then_branch: Box::new(Expression::Application(
+                                    Box::new(Expression::Variable("rbdepth".into())),
+                                    vec![Expression::Variable("l".into())],
+                                )),
+                                else_branch: Box::new(Expression::Application(
+                                    Box::new(Expression::Variable("rbdepth".into())),
+                                    vec![Expression::Variable("r".into())],
+                                )),
+                            }),
+                        ),
+                    ),
+                ],
+            ),
+        )];
+
+        assert_parse(source, expected);
     }
 }

@@ -9,3 +9,5 @@ lake update
 lake build aesop
 lake build hammer
 ```
+
+<https://leanprover-community.github.io/papers/lean-tactics.pdf>

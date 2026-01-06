@@ -131,6 +131,9 @@ impl ToLean for Expression {
                     else_branch.to_lean()
                 )
             }
+            Expression::Not(expr) => {
+                format!("(not ({}))", expr.to_lean())
+            }
         }
     }
 }

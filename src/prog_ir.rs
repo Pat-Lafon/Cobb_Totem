@@ -511,6 +511,7 @@ pub enum Pattern {
     Constructor(ConstructorName, Vec<Pattern>),
     Literal(Literal),
     Wildcard,
+    Tuple(Vec<Pattern>),
 }
 
 impl fmt::Display for Pattern {
@@ -535,6 +536,17 @@ impl fmt::Display for Pattern {
             }
             Pattern::Literal(lit) => write!(f, "{}", lit),
             Pattern::Wildcard => write!(f, "_"),
+            Pattern::Tuple(patterns) => {
+                write!(
+                    f,
+                    "({})",
+                    patterns
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
         }
     }
 }
@@ -560,6 +572,16 @@ impl ToLean for Pattern {
             }
             Pattern::Literal(lit) => lit.to_lean(),
             Pattern::Wildcard => "_".to_string(),
+            Pattern::Tuple(patterns) => {
+                format!(
+                    "({})",
+                    patterns
+                        .iter()
+                        .map(|p| p.to_lean())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            }
         }
     }
 }
@@ -579,6 +601,7 @@ pub enum Expression {
         then_branch: Box<Expression>,
         else_branch: Box<Expression>,
     },
+    Not(Box<Expression>),
 }
 
 impl fmt::Display for Expression {
@@ -646,6 +669,9 @@ impl fmt::Display for Expression {
                 else_branch,
             } => {
                 write!(f, "(ite {} {} {})", condition, then_branch, else_branch)
+            }
+            Expression::Not(expr) => {
+                write!(f, "(not {})", expr)
             }
         }
     }
