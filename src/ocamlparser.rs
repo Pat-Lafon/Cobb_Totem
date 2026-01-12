@@ -170,6 +170,9 @@ impl OcamlParser {
                     let let_binding = self.parse_value_definition(&mut cursor);
                     nodes.push(AstNode::LetBinding(let_binding));
                 }
+                "comment" => {
+                    // Skip comments
+                }
                 kind => {
                     panic!(
                         "Unexpected top-level node: '{}' (expected 'type_definition' or 'value_definition')",
