@@ -50,11 +50,9 @@ impl AxiomGenerator {
             crate::prog_ir::BinaryOp::Eq,
             rhs,
         )) = prop
-        {
-            if let Expression::Variable(name) = rhs.as_ref() {
+            && let Expression::Variable(name) = rhs.as_ref() {
                 return name.0 == RESULT_PARAM;
             }
-        }
         false
     }
 

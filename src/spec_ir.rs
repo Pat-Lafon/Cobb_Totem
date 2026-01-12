@@ -213,7 +213,7 @@ impl Proposition {
         if args.is_empty() {
             name.to_string()
         } else {
-            let args_str = args.iter().map(|e| f(e)).collect::<Vec<_>>().join(" ");
+            let args_str = args.iter().map(f).collect::<Vec<_>>().join(" ");
             format!("({} {})", name, args_str)
         }
     }
@@ -228,7 +228,7 @@ impl Proposition {
         if args.is_empty() {
             name_str
         } else {
-            let args_str = args.iter().map(|e| f(e)).collect::<Vec<_>>().join(" ");
+            let args_str = args.iter().map(f).collect::<Vec<_>>().join(" ");
             format!("({} {})", name_str, args_str)
         }
     }
