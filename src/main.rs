@@ -5,100 +5,19 @@ use cobb_totem::lean_backend::LeanContextBuilder;
 use cobb_totem::lean_validation::validate_lean_code;
 use cobb_totem::ocamlparser::OcamlParser;
 use cobb_totem::prog_ir::AstNode;
+use std::env;
+use std::fs;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    /* let program_str = "
-    type [@grind] ilist = Nil | Cons of int * ilist\n
+    // Read example file from command line argument or use default
+    let file_path = env::args()
+        .nth(1)
+        .unwrap_or_else(|| "examples/list_len.ml".to_string());
 
-    let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with
-    | Nil -> true
-    | Cons (x, xs) -> match xs with
-    | Nil -> true
-    | Cons (y, ys) -> (x <= y) && sorted xs"; */
+    let program_str = fs::read_to_string(&file_path)
+        .unwrap_or_else(|e| panic!("Failed to read file '{}': {}", file_path, e));
 
-    /* let program_str = "
-    type [@grind] ilist = Nil | Cons of int * ilist\n
-
-    let [@simp] [@grind] rec len (l : ilist) : int =
-    match l with
-    | Nil -> 0
-    | Cons (x, xs) -> 1 + len xs"; */
-
-    /*     let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
-
-    let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)"; */
-
-    /* let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
-
-    let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)
-
-    let [@simp] [@grind] rec complete (t : tree) : bool =
-  match t with
-  | Leaf -> true
-  | Node (x, l, r) -> complete l && complete r && height l = height r"; */
-
-    /* let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
-
-    let [@simp] [@grind] rec lower_bound (t : tree) (x : int) : bool =
-  match t with
-  | Leaf -> true
-  | Node (y, l, r) -> x <= y && lower_bound l x && lower_bound r x
-
-    let [@simp] [@grind] rec upper_bound (t : tree) (x : int) : bool =
-  match t with
-  | Leaf -> true
-  | Node (y, l, r) -> y <= x && upper_bound l x && upper_bound r x
-
-    let [@simp] [@grind] rec bst (t : tree) : bool =
-  match t with
-  | Leaf -> true
-  | Node (x, l, r) -> bst l && bst r && upper_bound l x && lower_bound r x"; */
-
-    let program_str = "type [@grind] rbtree = Rbtleaf | Rbtnode of bool * rbtree * int * rbtree
-
-    let [@simp] [@grind] rec num_black (t : rbtree) (h : int) : bool =
-      match t with
-      | Rbtleaf -> h = 0
-      | Rbtnode (c, l, v, r) ->
-          if c then num_black l (h - 1) && num_black r (h - 1)
-          else num_black l h && num_black r h
-
-    let [@simp] [@grind] rec no_red_red (t : rbtree) : bool =
-      match t with
-      | Rbtleaf -> true
-      | Rbtnode (c, l, v, r) ->
-          if not c then no_red_red l && no_red_red r
-          else
-            match (l, r) with
-            | Rbtnode (c', l1, v1, r1), Rbtnode (c'', l2, v2, r2) ->
-                (not c') && (not c'') && no_red_red l && no_red_red r
-            | Rbtnode (c', l1, v1, r1), Rbtleaf -> (not c') && no_red_red l
-            | Rbtleaf, Rbtnode (c'', l2, v2, r2) -> (not c'') && no_red_red r
-            | Rbtleaf, Rbtleaf -> true
-
-    let [@simp] [@grind] rec rb_root_color (t : rbtree) (c : bool) : bool =
-      match t with Rbtleaf -> false | Rbtnode (c', l, v, r) -> c = c'
-
-    let [@simp] [@grind] rec rbtree_invariant (t : rbtree) (h : int) : bool =
-      match t with
-      | Rbtleaf -> h = 0
-      | Rbtnode (c, l, v, r) ->
-          if not c then rbtree_invariant l (h - 1) && rbtree_invariant r (h - 1)
-          else
-            ((not (rb_root_color l true)) && not (rb_root_color r true))
-            && rbtree_invariant l h && rbtree_invariant r h
-
-    let [@simp] [@grind] rec rbdepth (t : rbtree) : int =
-      match t with
-      | Rbtleaf -> 0
-      | Rbtnode (c, l, v, r) -> 1 + ite (rbdepth l > rbdepth r) (rbdepth l) (rbdepth r)";
-
-    let mut parsed_nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
-    /*     assert_eq!(
-        parsed_nodes.len(),
-        2,
-        "Expected exactly two nodes (type + function)"
-    ); */
+    let mut parsed_nodes = OcamlParser::parse_nodes(&program_str).expect("Failed to parse program");
 
     let data_type = parsed_nodes
         .iter()
@@ -141,7 +60,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Validate generated theorems through Lean backend
     let lean_code = LeanContextBuilder::new()
         .with_nodes(parsed_nodes)
-        .with_axioms(axioms)
+        .with_axioms(axioms.clone())
         .with_type_theorems(&data_type.name, data_type.generate_complete_lawful_beq())
         .build();
 
