@@ -32,3 +32,4 @@ target
 build/
 lake-packages/
 *.olean
+Main.lean
