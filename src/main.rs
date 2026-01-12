@@ -52,9 +52,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let builder = generator.build_all();
     let axioms = builder.with_proof(|a| a.suggest_proof_tactic()).build()?;
 
-    println!("Generated axioms:");
+    eprintln!("Generated axioms:");
     for axiom in &axioms {
-        println!("{}", axiom.to_lean());
+        eprintln!("{}", axiom.to_lean());
     }
 
     // Validate generated theorems through Lean backend
@@ -64,15 +64,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_type_theorems(&data_type.name, data_type.generate_complete_lawful_beq())
         .build();
 
-    println!("\nLean Code:\n{lean_code}");
+    eprintln!("\nLean Code:\n{lean_code}");
 
     validate_lean_code(&lean_code)
         .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
 
-    println!("Lean validation passed!");
+    eprintln!("Lean validation passed!");
 
     let axiom_strings: Vec<String> = axioms.iter().map(|a| a.to_string()).collect();
-    println!("Axioms for Cobb use\n{}", axiom_strings.join("\n"));
+    println!("{}", axiom_strings.join("\n"));
 
     Ok(())
 }
