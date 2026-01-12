@@ -27,9 +27,7 @@ mod integration_tests {
             let function = parsed_nodes
                 .iter()
                 .find_map(|node| match node {
-                    AstNode::LetBinding(binding)
-                        if binding.name.as_str() == *func_name =>
-                    {
+                    AstNode::LetBinding(binding) if binding.name.as_str() == *func_name => {
                         Some(binding.clone())
                     }
                     _ => None,
@@ -179,6 +177,15 @@ let [@simp] [@grind] rec rbdepth (t : rbtree) : int =
   | Rbtleaf -> 0
   | Rbtnode (c, l, v, r) -> 1 + ite (rbdepth l > rbdepth r) (rbdepth l) (rbdepth r)";
 
-        validate_program(program_str, &["num_black", "no_red_red", "rb_root_color", "rbtree_invariant", "rbdepth"]);
+        validate_program(
+            program_str,
+            &[
+                "num_black",
+                "no_red_red",
+                "rb_root_color",
+                "rbtree_invariant",
+                "rbdepth",
+            ],
+        );
     }
 }

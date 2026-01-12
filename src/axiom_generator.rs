@@ -45,14 +45,11 @@ impl AxiomGenerator {
 
     /// Check if a proposition is an equality with RESULT_PARAM on the right side
     fn is_result_equality(prop: &Proposition) -> bool {
-        if let Proposition::Expr(Expression::BinaryOp(
-            _,
-            crate::prog_ir::BinaryOp::Eq,
-            rhs,
-        )) = prop
-            && let Expression::Variable(name) = rhs.as_ref() {
-                return name.0 == RESULT_PARAM;
-            }
+        if let Proposition::Expr(Expression::BinaryOp(_, crate::prog_ir::BinaryOp::Eq, rhs)) = prop
+            && let Expression::Variable(name) = rhs.as_ref()
+        {
+            return name.0 == RESULT_PARAM;
+        }
         false
     }
 
@@ -174,12 +171,10 @@ impl AxiomGenerator {
             }
             crate::prog_ir::Pattern::Literal(_) => vec![],
             crate::prog_ir::Pattern::Wildcard => vec![],
-            crate::prog_ir::Pattern::Tuple(patterns) => {
-                patterns
-                    .iter()
-                    .flat_map(|p| self.vars_from_pattern(p))
-                    .collect()
-            }
+            crate::prog_ir::Pattern::Tuple(patterns) => patterns
+                .iter()
+                .flat_map(|p| self.vars_from_pattern(p))
+                .collect(),
         }
     }
 
@@ -199,10 +194,7 @@ impl AxiomGenerator {
                 panic!("Wildcard patterns are not supported in axiom generation")
             }
             crate::prog_ir::Pattern::Tuple(patterns) => {
-                let elements = patterns
-                    .iter()
-                    .map(|p| self.expr_from_pattern(p))
-                    .collect();
+                let elements = patterns.iter().map(|p| self.expr_from_pattern(p)).collect();
                 Expression::Tuple(elements)
             }
         }
@@ -334,7 +326,8 @@ impl AxiomGenerator {
 
                     // Flatten all preceding steps from arguments
                     let mut proposition_steps = preceding_steps_per_arg.concat();
-                    proposition_steps.push(Proposition::Predicate(func_name_wrapper, converted_args));
+                    proposition_steps
+                        .push(Proposition::Predicate(func_name_wrapper, converted_args));
                     proposition_steps.push(Proposition::Expr(existential.clone()));
 
                     // Look up the function's return type if available
@@ -343,8 +336,9 @@ impl AxiomGenerator {
                     let mut additional_parameters = arg_params;
                     additional_parameters.push(Parameter::existential(
                         exists_var,
-                        func_return_type
-                            .unwrap_or_else(|| panic!("Function '{}' type not registered", func_name)),
+                        func_return_type.unwrap_or_else(|| {
+                            panic!("Function '{}' type not registered", func_name)
+                        }),
                     ));
 
                     results.push(BodyPropositionData {
@@ -374,8 +368,7 @@ impl AxiomGenerator {
                         ));
 
                         // Check if the final step is already an equality with RESULT_PARAM
-                        let (last, rest) =
-                            branch_body_data.proposition_steps.split_last().unwrap();
+                        let (last, rest) = branch_body_data.proposition_steps.split_last().unwrap();
 
                         let mut final_steps = vec![pattern_constraint];
                         final_steps.extend(rest.to_vec());
@@ -419,10 +412,7 @@ impl AxiomGenerator {
                     let condition_expr = last_cond.as_expr().clone();
 
                     // Loop over both branches with their bool values
-                    for (is_true, branch) in [
-                        (true, then_branch),
-                        (false, else_branch),
-                    ] {
+                    for (is_true, branch) in [(true, then_branch), (false, else_branch)] {
                         let branch_results = self.from_expression(branch);
                         for branch_body_data in branch_results {
                             let mut steps: Vec<Proposition> = preceding_conds.to_vec();
@@ -498,10 +488,7 @@ impl AxiomGenerator {
     /// Build a configured AxiomBuilderState from all prepared functions
     /// The builder contains the prepared functions and can be used to generate axioms
     pub fn build_all(&self) -> AxiomBuilderState {
-        AxiomBuilderState::new(
-            self.type_constructors.clone(),
-            self.prepared.clone(),
-        )
+        AxiomBuilderState::new(self.type_constructors.clone(), self.prepared.clone())
     }
 }
 
@@ -645,21 +632,13 @@ mod tests {
         // Recursive case: Val with ite - true branch (x > 0)
         assert_eq!(
             props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(d = (.Val x))",
-                "((x > 0) = true)",
-                "((1 + x) = res)"
-            ]
+            vec!["(d = (.Val x))", "((x > 0) = true)", "((1 + x) = res)"]
         );
 
         // Recursive case: Val with ite - false branch (x > 0 is false)
         assert_eq!(
             props[2].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(d = (.Val x))",
-                "((x > 0) = false)",
-                "((1 + 0) = res)"
-            ]
+            vec!["(d = (.Val x))", "((x > 0) = false)", "((1 + 0) = res)"]
         );
     }
 
@@ -719,21 +698,13 @@ mod tests {
         // Recursive case: Cons with ite - true branch (h > 0)
         assert_eq!(
             props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(l = (.Cons h t))",
-                "((h > 0) = true)",
-                "(h = res)"
-            ]
+            vec!["(l = (.Cons h t))", "((h > 0) = true)", "(h = res)"]
         );
 
         // Recursive case: Cons with ite - false branch (h > 0 is false)
         assert_eq!(
             props[2].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(l = (.Cons h t))",
-                "((h > 0) = false)",
-                "(0 = res)"
-            ]
+            vec!["(l = (.Cons h t))", "((h > 0) = false)", "(0 = res)"]
         );
     }
 }

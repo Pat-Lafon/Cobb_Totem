@@ -70,8 +70,7 @@ impl Axiom {
 
     /// Check that all variables in the body are declared as parameters
     fn validate_no_free_variables(&self) -> Result<(), String> {
-        let declared_vars: VarSet =
-            self.params.iter().map(|p| p.name.clone()).collect();
+        let declared_vars: VarSet = self.params.iter().map(|p| p.name.clone()).collect();
 
         let all_vars = collect_all_variables(&self.body);
         let free_vars: Vec<_> = all_vars.difference(&declared_vars).collect();
@@ -82,7 +81,11 @@ impl Axiom {
 
         Err(format!(
             "Free variables in body: {}",
-            free_vars.iter().map(|v| v.to_string()).collect::<Vec<_>>().join(", ")
+            free_vars
+                .iter()
+                .map(|v| v.to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
         ))
     }
 }
@@ -115,7 +118,10 @@ mod tests {
             proof: None,
         };
 
-        assert!(axiom.validate_no_free_variables().is_err(), "Expected validation to fail for free variable");
+        assert!(
+            axiom.validate_no_free_variables().is_err(),
+            "Expected validation to fail for free variable"
+        );
     }
 
     #[test]

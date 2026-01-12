@@ -31,8 +31,12 @@ pub fn validate_lean_code(code: &str) -> Result<(), String> {
 
     // Write code to stdin
     {
-        let mut stdin = child.stdin.take()
-            .ok_or_else(|| format!("Lean code validation failed:\n{}\n\nFailed to open stdin", code))?;
+        let mut stdin = child.stdin.take().ok_or_else(|| {
+            format!(
+                "Lean code validation failed:\n{}\n\nFailed to open stdin",
+                code
+            )
+        })?;
         stdin.write_all(code.as_bytes()).map_err(|e| {
             format!(
                 "Lean code validation failed:\n{}\n\nFailed to write to stdin: {}",
@@ -72,7 +76,10 @@ pub fn debug_print_lean(code: &str) {
 
     eprintln!("\n=== Generated Lean Code ===");
     if line_count > MAX_DEBUG_LINES {
-        eprintln!("(Truncated: {} total lines, showing first {})", line_count, MAX_DEBUG_LINES);
+        eprintln!(
+            "(Truncated: {} total lines, showing first {})",
+            line_count, MAX_DEBUG_LINES
+        );
     }
     for (i, line) in code.lines().enumerate() {
         if i >= MAX_DEBUG_LINES {

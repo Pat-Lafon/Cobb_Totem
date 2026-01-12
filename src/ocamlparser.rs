@@ -40,7 +40,8 @@ impl OcamlParser {
         let text = node
             .utf8_text(self.source.as_bytes())
             .unwrap_or_else(|e| panic!("Failed to extract text from type node: {}", e));
-        text.parse().unwrap_or_else(|e| panic!("Failed to parse type: {}", e))
+        text.parse()
+            .unwrap_or_else(|e| panic!("Failed to parse type: {}", e))
     }
 
     /// Helper: moves cursor to parent and asserts success.
@@ -536,7 +537,9 @@ impl OcamlParser {
                 let text = node
                     .utf8_text(self.source.as_bytes())
                     .expect("Failed to extract identifier text");
-                let valid_var = text.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
+                let valid_var = text
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_' || c == '\'')
                     && text
                         .chars()
                         .next()
@@ -889,79 +892,76 @@ impl OcamlParser {
     }
 
     fn parse_if_expression(&self, node: Node) -> Expression {
-         let mut cursor = node.walk();
-         assert!(
-             cursor.goto_first_child(),
-             "If expression has no children"
-         );
+        let mut cursor = node.walk();
+        assert!(cursor.goto_first_child(), "If expression has no children");
 
-         let if_keyword = cursor.node();
-         assert_eq!(if_keyword.kind(), "if");
+        let if_keyword = cursor.node();
+        assert_eq!(if_keyword.kind(), "if");
 
-         // Next should be the condition expression
-         assert!(
-             cursor.goto_next_sibling(),
-             "If expression missing condition"
-         );
-         let condition_node = cursor.node();
-         let condition = self.parse_expression(condition_node);
+        // Next should be the condition expression
+        assert!(
+            cursor.goto_next_sibling(),
+            "If expression missing condition"
+        );
+        let condition_node = cursor.node();
+        let condition = self.parse_expression(condition_node);
 
-         // Next should be 'then_clause'
-         assert!(
-             cursor.goto_next_sibling(),
-             "If expression missing 'then_clause'"
-         );
-         let then_clause = cursor.node();
-         assert_eq!(then_clause.kind(), "then_clause");
+        // Next should be 'then_clause'
+        assert!(
+            cursor.goto_next_sibling(),
+            "If expression missing 'then_clause'"
+        );
+        let then_clause = cursor.node();
+        assert_eq!(then_clause.kind(), "then_clause");
 
-         // Parse the then_clause to get the expression
-         let mut then_cursor = then_clause.walk();
-         assert!(
-             then_cursor.goto_first_child(),
-             "then_clause has no children"
-         );
+        // Parse the then_clause to get the expression
+        let mut then_cursor = then_clause.walk();
+        assert!(
+            then_cursor.goto_first_child(),
+            "then_clause has no children"
+        );
 
-         let then_keyword = then_cursor.node();
-         assert_eq!(then_keyword.kind(), "then");
+        let then_keyword = then_cursor.node();
+        assert_eq!(then_keyword.kind(), "then");
 
-         assert!(
-             then_cursor.goto_next_sibling(),
-             "then_clause missing expression after 'then'"
-         );
-         let then_branch_node = then_cursor.node();
-         let then_branch = self.parse_expression(then_branch_node);
+        assert!(
+            then_cursor.goto_next_sibling(),
+            "then_clause missing expression after 'then'"
+        );
+        let then_branch_node = then_cursor.node();
+        let then_branch = self.parse_expression(then_branch_node);
 
-         // Next should be 'else_clause'
-         assert!(
-             cursor.goto_next_sibling(),
-             "If expression missing 'else_clause'"
-         );
-         let else_clause = cursor.node();
-         assert_eq!(else_clause.kind(), "else_clause");
+        // Next should be 'else_clause'
+        assert!(
+            cursor.goto_next_sibling(),
+            "If expression missing 'else_clause'"
+        );
+        let else_clause = cursor.node();
+        assert_eq!(else_clause.kind(), "else_clause");
 
-         // Parse the else_clause to get the expression
-         let mut else_cursor = else_clause.walk();
-         assert!(
-             else_cursor.goto_first_child(),
-             "else_clause has no children"
-         );
+        // Parse the else_clause to get the expression
+        let mut else_cursor = else_clause.walk();
+        assert!(
+            else_cursor.goto_first_child(),
+            "else_clause has no children"
+        );
 
-         let else_keyword = else_cursor.node();
-         assert_eq!(else_keyword.kind(), "else");
+        let else_keyword = else_cursor.node();
+        assert_eq!(else_keyword.kind(), "else");
 
-         assert!(
-             else_cursor.goto_next_sibling(),
-             "else_clause missing expression after 'else'"
-         );
-         let else_branch_node = else_cursor.node();
-         let else_branch = self.parse_expression(else_branch_node);
+        assert!(
+            else_cursor.goto_next_sibling(),
+            "else_clause missing expression after 'else'"
+        );
+        let else_branch_node = else_cursor.node();
+        let else_branch = self.parse_expression(else_branch_node);
 
-         Expression::IfThenElse {
-             condition: Box::new(condition),
-             then_branch: Box::new(then_branch),
-             else_branch: Box::new(else_branch),
-         }
-     }
+        Expression::IfThenElse {
+            condition: Box::new(condition),
+            then_branch: Box::new(then_branch),
+            else_branch: Box::new(else_branch),
+        }
+    }
 
     fn parse_match_expression_node(&self, node: Node) -> Expression {
         let mut cursor = node.walk();
@@ -1906,7 +1906,10 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest)
                 Some(Type::Int),
                 Expression::Match(
                     Box::new(Expression::Variable("x".into())),
-                    vec![(Pattern::Literal(Literal::Bool(true)), Expression::Literal(Literal::Int(42)))],
+                    vec![(
+                        Pattern::Literal(Literal::Bool(true)),
+                        Expression::Literal(Literal::Int(42)),
+                    )],
                 ),
             )],
         );
@@ -2005,8 +2008,7 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest)
 
     #[test]
     fn test_parse_rb_root_color() {
-        let source =
-            "let[@simp] [@grind] rec rb_root_color (t : rbtree) (c : bool) : bool =
+        let source = "let[@simp] [@grind] rec rb_root_color (t : rbtree) (c : bool) : bool =
       match t with Rbtleaf -> false | Rbtnode (c', _, _, _) -> c = c'";
 
         let expected = vec![let_binding_rec(

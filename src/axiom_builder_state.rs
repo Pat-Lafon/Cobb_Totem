@@ -372,15 +372,19 @@ mod tests {
         use crate::create_wrapper;
 
         let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree\n\nlet [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)\n\nlet [@simp] [@grind] rec complete (t : tree) : bool = match t with | Leaf -> true | Node (x, l, r) -> complete l && complete r && height l = height r";
-        
+
         let mut parsed_nodes = test_helpers::parse_program(program_str);
         let height_fn = test_helpers::find_function(&parsed_nodes, "height");
         let complete_fn = test_helpers::find_function(&parsed_nodes, "complete");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
         let mut generator = AxiomGenerator::new(type_constructors);
-        generator.prepare_function(&height_fn).expect("Failed to prepare height");
-        generator.prepare_function(&complete_fn).expect("Failed to prepare complete");
+        generator
+            .prepare_function(&height_fn)
+            .expect("Failed to prepare height");
+        generator
+            .prepare_function(&complete_fn)
+            .expect("Failed to prepare complete");
 
         let builder = generator.build_all();
         let axioms = builder
@@ -392,7 +396,7 @@ mod tests {
         let complete_wrapper = create_wrapper::create_wrapper(&complete_fn);
         parsed_nodes.push(AstNode::LetBinding(height_wrapper));
         parsed_nodes.push(AstNode::LetBinding(complete_wrapper));
-        
+
         test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
@@ -402,7 +406,7 @@ mod tests {
         use crate::create_wrapper;
 
         let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree\n\n    let [@simp] [@grind] rec lower_bound (t : tree) (x : int) : bool =\n  match t with\n  | Leaf -> true\n  | Node (y, l, r) -> x <= y && lower_bound l x && lower_bound r x\n\n    let [@simp] [@grind] rec upper_bound (t : tree) (x : int) : bool =\n  match t with\n  | Leaf -> true\n  | Node (y, l, r) -> y <= x && upper_bound l x && upper_bound r x\n\n    let [@simp] [@grind] rec bst (t : tree) : bool =\n  match t with\n  | Leaf -> true\n  | Node (x, l, r) -> bst l && bst r && upper_bound l x && lower_bound r x";
-        
+
         let mut parsed_nodes = test_helpers::parse_program(program_str);
         let lower_bound_fn = test_helpers::find_function(&parsed_nodes, "lower_bound");
         let upper_bound_fn = test_helpers::find_function(&parsed_nodes, "upper_bound");
@@ -410,9 +414,15 @@ mod tests {
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
         let mut generator = AxiomGenerator::new(type_constructors);
-        generator.prepare_function(&lower_bound_fn).expect("Failed to prepare lower_bound");
-        generator.prepare_function(&upper_bound_fn).expect("Failed to prepare upper_bound");
-        generator.prepare_function(&bst_fn).expect("Failed to prepare bst");
+        generator
+            .prepare_function(&lower_bound_fn)
+            .expect("Failed to prepare lower_bound");
+        generator
+            .prepare_function(&upper_bound_fn)
+            .expect("Failed to prepare upper_bound");
+        generator
+            .prepare_function(&bst_fn)
+            .expect("Failed to prepare bst");
 
         let builder = generator.build_all();
         let axioms = builder
@@ -426,7 +436,7 @@ mod tests {
         parsed_nodes.push(AstNode::LetBinding(lower_bound_wrapper));
         parsed_nodes.push(AstNode::LetBinding(upper_bound_wrapper));
         parsed_nodes.push(AstNode::LetBinding(bst_wrapper));
-        
+
         test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 }

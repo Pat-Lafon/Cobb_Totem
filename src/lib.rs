@@ -59,8 +59,6 @@ impl From<&str> for VarName {
     }
 }
 
-
-
 impl AsRef<str> for VarName {
     fn as_ref(&self) -> &str {
         &self.0
@@ -93,11 +91,11 @@ impl ToLean for Literal {
 /// Test utilities for parsing and generating axioms
 #[cfg(test)]
 mod test_helpers {
+    use crate::VarName;
     use crate::axiom_generator::AxiomGenerator;
     use crate::ocamlparser::OcamlParser;
     use crate::prog_ir::{AstNode, LetBinding, TypeDecl};
     use crate::spec_ir::{Axiom, Proposition};
-    use crate::VarName;
 
     /// Parse program string and extract type and function definitions
     pub fn parse_program(program_str: &str) -> Vec<AstNode> {

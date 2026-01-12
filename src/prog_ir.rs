@@ -726,7 +726,12 @@ mod tests {
     use crate::{ToLean, VarName};
 
     /// Helper to validate complete LawfulBEq implementation
-    fn assert_lawful_beq_valid(type_decl: &TypeDecl, beq_attributes: &str, theorems: &str, instance: &str) {
+    fn assert_lawful_beq_valid(
+        type_decl: &TypeDecl,
+        beq_attributes: &str,
+        theorems: &str,
+        instance: &str,
+    ) {
         validate_lean_code(&format!(
             "{}\n{}\n{}\n{}",
             type_decl.to_lean(),
@@ -734,7 +739,12 @@ mod tests {
             theorems,
             instance
         ))
-        .unwrap_or_else(|e| panic!("{} with LawfulBEq Lean validation failed: {}", type_decl.name, e));
+        .unwrap_or_else(|e| {
+            panic!(
+                "{} with LawfulBEq Lean validation failed: {}",
+                type_decl.name, e
+            )
+        });
     }
 
     #[test]
