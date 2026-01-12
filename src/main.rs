@@ -71,5 +71,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("Lean validation passed!");
 
+    let axiom_strings: Vec<String> = axioms.iter().map(|a| a.to_string()).collect();
+    println!("Axioms for Cobb use\n{}", axiom_strings.join("\n"));
+
     Ok(())
 }
