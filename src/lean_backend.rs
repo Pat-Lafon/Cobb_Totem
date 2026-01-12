@@ -296,7 +296,7 @@ mod tests {
         let lean_code = format!("{}\n\n{}", ilist_type.to_lean(), len_function.to_lean());
         assert_eq!(
             lean_code,
-            "@[grind]\ninductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr\n\ndef len (l : ilist) (n : Int) : Bool := match l with\n  | .Nil => (n == 0)\n  | .Cons _ rest => len rest (n - 1)"
+            "@[grind]\ninductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr\n\ndef len (l : ilist) (n : Int) : Bool := match l with\n  | .Nil => (n == 0)\n  | (.Cons _ rest) => len rest (n - 1)"
         );
         validate_lean_code(&lean_code)
             .unwrap_or_else(|e| panic!("Generated Lean code failed validation: {}", e));

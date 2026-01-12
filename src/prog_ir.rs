@@ -560,7 +560,7 @@ impl ToLean for Pattern {
                     format!(".{}", name)
                 } else {
                     format!(
-                        ".{} {}",
+                        "(.{} {})",
                         name,
                         patterns
                             .iter()
