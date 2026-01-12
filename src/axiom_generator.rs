@@ -232,7 +232,10 @@ impl AxiomGenerator {
     }
 
     /// Analyze expressions, building propositions
-    fn analyze_expression(&mut self, body: &crate::prog_ir::Expression) -> Vec<BodyPropositionData> {
+    fn analyze_expression(
+        &mut self,
+        body: &crate::prog_ir::Expression,
+    ) -> Vec<BodyPropositionData> {
         match body {
             crate::prog_ir::Expression::Variable(var_name) => vec![BodyPropositionData {
                 proposition_steps: vec![Proposition::Expr(Expression::Variable(var_name.clone()))],
