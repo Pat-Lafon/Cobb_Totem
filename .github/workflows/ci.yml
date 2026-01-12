@@ -49,7 +49,7 @@ jobs:
         run: |
           lake update
           lake build aesop
-          lake build hammer
+          lake build Hammer
 
       - name: Build
         run: cargo build --verbose
