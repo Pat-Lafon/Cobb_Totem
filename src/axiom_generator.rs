@@ -8,6 +8,17 @@ use crate::create_wrapper::{RESULT_PARAM, wrapper_name};
 use crate::prog_ir::{LetBinding, Type, TypeDecl};
 use crate::spec_ir::{Expression, Parameter, Proposition};
 
+/// Result of extracting expressions with their preceding steps and parameters
+#[derive(Debug, Clone)]
+struct ExprExtraction {
+    /// The final expressions extracted
+    expressions: Vec<Expression>,
+    /// Preceding proposition steps for each expression
+    preceding_steps: Vec<Vec<Proposition>>,
+    /// Additional parameters introduced during extraction
+    parameters: Vec<Parameter>,
+}
+
 /// Generates axioms in the spec IR from parsed program IR functions.
 pub struct AxiomGenerator {
     /// Type declarations for looking up constructor types
@@ -108,14 +119,13 @@ impl AxiomGenerator {
 
     /// Extract expressions with their preceding proposition steps and parameters.
     /// Returns all combinations of results across the input expressions.
-    /// Each result tuple contains: the final expressions, preceding propositions, and new parameters.
     fn extract_exprs_with_steps(
         &mut self,
         exprs: Vec<&crate::prog_ir::Expression>,
-    ) -> Result<Vec<(Vec<Expression>, Vec<Vec<Proposition>>, Vec<Parameter>)>, String> {
+    ) -> Result<Vec<ExprExtraction>, String> {
         let all_results: Vec<Vec<BodyPropositionData>> = exprs
             .iter()
-            .map(|expr| self.from_expression(expr))
+            .map(|expr| self.analyze_expression(expr))
             .collect();
 
         all_results
@@ -142,7 +152,11 @@ impl AxiomGenerator {
                     all_params.extend(body_data.additional_parameters);
                 }
 
-                Ok((all_exprs, all_steps, all_params))
+                Ok(ExprExtraction {
+                    expressions: all_exprs,
+                    preceding_steps: all_steps,
+                    parameters: all_params,
+                })
             })
             .collect()
     }
@@ -212,13 +226,13 @@ impl AxiomGenerator {
 
         self.function_types
             .insert(binding.name.clone(), binding.return_type.clone().unwrap());
-        let body_propositions = self.from_expression(&binding.body);
+        let body_propositions = self.analyze_expression(&binding.body);
         self.prepared.push((binding.clone(), body_propositions));
         Ok(())
     }
 
     /// Analyze expressions, building propositions
-    fn from_expression(&mut self, body: &crate::prog_ir::Expression) -> Vec<BodyPropositionData> {
+    fn analyze_expression(&mut self, body: &crate::prog_ir::Expression) -> Vec<BodyPropositionData> {
         match body {
             crate::prog_ir::Expression::Variable(var_name) => vec![BodyPropositionData {
                 proposition_steps: vec![Proposition::Expr(Expression::Variable(var_name.clone()))],
@@ -228,7 +242,7 @@ impl AxiomGenerator {
                 let converted_expressions: Vec<_> = expressions
                     .iter()
                     .map(|expr| {
-                        Self::extract_single_expr(self.from_expression(expr))
+                        Self::extract_single_expr(self.analyze_expression(expr))
                             .unwrap_or_else(|e| panic!("Constructor argument: {}", e))
                     })
                     .collect();
@@ -250,23 +264,23 @@ impl AxiomGenerator {
                     .unwrap_or_else(|e| panic!("UnaryOp operand: {}", e));
 
                 let mut results = Vec::new();
-                for (exprs, preceding_steps_list, params) in combined {
+                for extraction in combined {
                     assert_eq!(
-                        exprs.len(),
+                        extraction.expressions.len(),
                         1,
                         "UnaryOp requires exactly 1 expression, got {}",
-                        exprs.len()
+                        extraction.expressions.len()
                     );
 
-                    let mut proposition_steps = preceding_steps_list.concat();
+                    let mut proposition_steps = extraction.preceding_steps.concat();
                     proposition_steps.push(Proposition::Expr(Expression::UnaryOp(
                         *unary_op,
-                        Box::new(exprs[0].clone()),
+                        Box::new(extraction.expressions[0].clone()),
                     )));
 
                     results.push(BodyPropositionData {
                         proposition_steps,
-                        additional_parameters: params,
+                        additional_parameters: extraction.parameters,
                     });
                 }
                 results
@@ -277,30 +291,30 @@ impl AxiomGenerator {
                     .unwrap_or_else(|e| panic!("BinaryOp operand: {}", e));
 
                 let mut results = Vec::new();
-                for (exprs, preceding_steps_list, params) in combined {
+                for extraction in combined {
                     assert_eq!(
-                        exprs.len(),
+                        extraction.expressions.len(),
                         2,
                         "BinaryOp requires exactly 2 expressions, got {}",
-                        exprs.len()
+                        extraction.expressions.len()
                     );
 
-                    let mut proposition_steps = preceding_steps_list.concat();
+                    let mut proposition_steps = extraction.preceding_steps.concat();
                     proposition_steps.push(Proposition::Expr(Expression::BinaryOp(
-                        Box::new(exprs[0].clone()),
+                        Box::new(extraction.expressions[0].clone()),
                         *binary_op,
-                        Box::new(exprs[1].clone()),
+                        Box::new(extraction.expressions[1].clone()),
                     )));
 
                     results.push(BodyPropositionData {
                         proposition_steps,
-                        additional_parameters: params,
+                        additional_parameters: extraction.parameters,
                     });
                 }
                 results
             }
             crate::prog_ir::Expression::Application(func_expr, arg_exprs) => {
-                let func_body_data = Self::extract_single_expr(self.from_expression(func_expr))
+                let func_body_data = Self::extract_single_expr(self.analyze_expression(func_expr))
                     .unwrap_or_else(|e| panic!("Application function: {}", e));
 
                 let func_name = match func_body_data {
@@ -317,24 +331,25 @@ impl AxiomGenerator {
                     .unwrap_or_else(|e| panic!("Application argument: {}", e));
 
                 let mut results = Vec::new();
-                for (mut converted_args, preceding_steps_per_arg, arg_params) in combined {
+                for mut extraction in combined {
                     let exists_var = self.next_var();
                     let existential = Expression::Variable(exists_var.clone());
 
                     let func_name_wrapper = wrapper_name(&func_name);
-                    converted_args.push(existential.clone());
+                    extraction.expressions.push(existential.clone());
 
                     // Flatten all preceding steps from arguments
-                    let mut proposition_steps = preceding_steps_per_arg.concat();
-                    proposition_steps
-                        .push(Proposition::Predicate(func_name_wrapper, converted_args));
+                    let mut proposition_steps = extraction.preceding_steps.concat();
+                    proposition_steps.push(Proposition::Predicate(
+                        func_name_wrapper,
+                        extraction.expressions,
+                    ));
                     proposition_steps.push(Proposition::Expr(existential.clone()));
 
                     // Look up the function's return type if available
                     let func_return_type = self.get_function_type(&func_name).cloned();
 
-                    let mut additional_parameters = arg_params;
-                    additional_parameters.push(Parameter::existential(
+                    extraction.parameters.push(Parameter::existential(
                         exists_var,
                         func_return_type.unwrap_or_else(|| {
                             panic!("Function '{}' type not registered", func_name)
@@ -343,7 +358,7 @@ impl AxiomGenerator {
 
                     results.push(BodyPropositionData {
                         proposition_steps,
-                        additional_parameters,
+                        additional_parameters: extraction.parameters,
                     });
                 }
                 results
@@ -351,13 +366,13 @@ impl AxiomGenerator {
             crate::prog_ir::Expression::Match(scrutinee, cases) => {
                 // Analyze scrutinee once to get its expression for pattern matching
                 let pattern_constraint_base =
-                    &Self::extract_single_expr(self.from_expression(scrutinee))
+                    &Self::extract_single_expr(self.analyze_expression(scrutinee))
                         .unwrap_or_else(|e| panic!("Match scrutinee: {}", e));
 
                 // For each branch of the match, create a result with pattern constraint and branch steps
                 let mut results = vec![];
                 for (pattern, branch_expr) in cases {
-                    let branch_results = self.from_expression(branch_expr);
+                    let branch_results = self.analyze_expression(branch_expr);
                     for branch_body_data in branch_results {
                         let pattern_vars = self.vars_from_pattern(pattern);
                         let pattern_expr = self.expr_from_pattern(pattern);
@@ -401,7 +416,7 @@ impl AxiomGenerator {
                 then_branch,
                 else_branch,
             } => {
-                let condition_results = self.from_expression(condition);
+                let condition_results = self.analyze_expression(condition);
                 let mut results = Vec::new();
 
                 for condition_body_data in condition_results {
@@ -413,7 +428,7 @@ impl AxiomGenerator {
 
                     // Loop over both branches with their bool values
                     for (is_true, branch) in [(true, then_branch), (false, else_branch)] {
-                        let branch_results = self.from_expression(branch);
+                        let branch_results = self.analyze_expression(branch);
                         for branch_body_data in branch_results {
                             let mut steps: Vec<Proposition> = preceding_conds.to_vec();
                             steps.push(Proposition::Expr(Expression::BinaryOp(
@@ -442,25 +457,25 @@ impl AxiomGenerator {
                     .unwrap_or_else(|e| panic!("Not expression: {}", e));
 
                 let mut results = Vec::new();
-                for (exprs, preceding_steps_list, params) in combined {
+                for extraction in combined {
                     assert_eq!(
-                        exprs.len(),
+                        extraction.expressions.len(),
                         1,
                         "Not requires exactly 1 expression, got {}",
-                        exprs.len()
+                        extraction.expressions.len()
                     );
 
                     // Flatten all preceding steps
-                    let mut all_steps = preceding_steps_list.concat();
+                    let mut all_steps = extraction.preceding_steps.concat();
 
                     // Add the final Not expression
                     all_steps.push(Proposition::Expr(Expression::Not(Box::new(
-                        exprs[0].clone(),
+                        extraction.expressions[0].clone(),
                     ))));
 
                     results.push(BodyPropositionData {
                         proposition_steps: all_steps,
-                        additional_parameters: params,
+                        additional_parameters: extraction.parameters,
                     });
                 }
                 results
@@ -471,13 +486,14 @@ impl AxiomGenerator {
                     .unwrap_or_else(|e| panic!("Tuple element: {}", e));
 
                 let mut results = Vec::new();
-                for (exprs, preceding_steps_list, params) in combined {
-                    let mut proposition_steps = preceding_steps_list.concat();
-                    proposition_steps.push(Proposition::Expr(Expression::Tuple(exprs)));
+                for extraction in combined {
+                    let mut proposition_steps = extraction.preceding_steps.concat();
+                    proposition_steps
+                        .push(Proposition::Expr(Expression::Tuple(extraction.expressions)));
 
                     results.push(BodyPropositionData {
                         proposition_steps,
-                        additional_parameters: params,
+                        additional_parameters: extraction.parameters,
                     });
                 }
                 results

@@ -5,6 +5,9 @@ use crate::create_wrapper::{RESULT_PARAM, wrapper_name};
 use crate::prog_ir::{LetBinding, TypeDecl};
 use crate::spec_ir::{Axiom, Expression, Parameter, Proposition, Quantifier};
 
+/// Type alias for proof tactic closure
+pub type ProofTacticFn = Box<dyn Fn(&Axiom) -> String>;
+
 /// Data for a single axiom body with its parameters
 /// The proposition_steps are composed into an implication chain during axiom generation
 #[derive(Debug, Clone)]
@@ -21,7 +24,7 @@ pub struct AxiomBuilderState {
     /// Functions with their body propositions for batch processing
     pub prepared: Vec<(LetBinding, Vec<BodyPropositionData>)>,
     /// Optional closure to determine proof technique for each axiom
-    pub proof: Option<Box<dyn Fn(&Axiom) -> String>>,
+    pub proof: Option<ProofTacticFn>,
 }
 
 impl std::fmt::Debug for AxiomBuilderState {
