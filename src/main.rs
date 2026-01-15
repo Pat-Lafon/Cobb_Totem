@@ -72,19 +72,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("{}", axiom.to_lean());
     }
 
-    // Generate OCaml axiom output
-    let axiom_strings: Vec<String> = axioms.iter().map(|a| a.to_string()).collect();
-    let axiom_output = axiom_strings.join("\n");
-
-    // Write to file if --export-axioms specified, otherwise print to stdout
-    if let Some(path) = export_path {
-        fs::write(&path, &axiom_output)
-            .unwrap_or_else(|e| panic!("Failed to write axioms to '{}': {}", path, e));
-        eprintln!("Axioms exported to: {}", path);
-    } else {
-        println!("{}", axiom_output);
-    }
-
     // Validate generated theorems through Lean backend
     let lean_code = LeanContextBuilder::new()
         .with_nodes(parsed_nodes)
@@ -98,6 +85,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
 
     eprintln!("Lean validation passed!");
+
+    // Generate OCaml axiom output
+    let axiom_strings: Vec<String> = axioms.iter().map(|a| a.to_string()).collect();
+    let axiom_output = axiom_strings.join("\n");
+
+    // Write to file if --export-axioms specified, otherwise print to stdout
+    if let Some(path) = export_path {
+        fs::write(&path, &axiom_output)
+            .unwrap_or_else(|e| panic!("Failed to write axioms to '{}': {}", path, e));
+        eprintln!("Axioms exported to: {}", path);
+    } else {
+        println!("{}", axiom_output);
+    }
 
     Ok(())
 }
