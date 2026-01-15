@@ -7,7 +7,7 @@ If you get an error like `unknown module prefix 'Aesop'` when running `lake env 
 ```bash
 lake update
 lake build aesop
-lake build hammer
+lake build Hammer
 ```
 
 <https://leanprover-community.github.io/papers/lean-tactics.pdf>
