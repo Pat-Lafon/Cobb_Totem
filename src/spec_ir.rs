@@ -204,31 +204,60 @@ impl ToLean for Axiom {
 }
 
 impl Proposition {
-    /// Format a predicate for display, handling both empty and non-empty argument lists.
-    fn format_predicate(
-        name: &str,
-        args: &[Expression],
-        f: impl Fn(&Expression) -> String,
-    ) -> String {
+    /// Format a predicate for display (OCaml syntax), handling both empty and non-empty argument lists.
+    fn format_predicate_display(name: &str, args: &[Expression]) -> String {
         if args.is_empty() {
             name.to_string()
         } else {
-            let args_str = args.iter().map(f).collect::<Vec<_>>().join(" ");
+            let args_str = args
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
             format!("({} {})", name, args_str)
         }
     }
 
-    /// Format a constructor for display, handling both empty and non-empty argument lists.
-    fn format_constructor(
-        name: &ConstructorName,
-        args: &[Expression],
-        f: impl Fn(&Expression) -> String,
-    ) -> String {
+    /// Format a predicate for Lean display, handling both empty and non-empty argument lists.
+    fn format_predicate_lean(name: &str, args: &[Expression]) -> String {
+        if args.is_empty() {
+            name.to_string()
+        } else {
+            let args_str = args
+                .iter()
+                .map(|e| e.to_lean())
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("({} {})", name, args_str)
+        }
+    }
+
+    /// Format a constructor for OCaml display (no leading dot for standard OCaml syntax)
+    fn format_constructor_display(name: &ConstructorName, args: &[Expression]) -> String {
+        let name_str = name.to_string();
+        if args.is_empty() {
+            name_str
+        } else {
+            let args_str = args
+                .iter()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join(" ");
+            format!("({} {})", name_str, args_str)
+        }
+    }
+
+    /// Format a constructor for Lean display (with leading dot for Lean pattern syntax)
+    fn format_constructor_lean(name: &ConstructorName, args: &[Expression]) -> String {
         let name_str = format!(".{}", name);
         if args.is_empty() {
             name_str
         } else {
-            let args_str = args.iter().map(f).collect::<Vec<_>>().join(" ");
+            let args_str = args
+                .iter()
+                .map(|e| e.to_lean())
+                .collect::<Vec<_>>()
+                .join(" ");
             format!("({} {})", name_str, args_str)
         }
     }
@@ -304,11 +333,7 @@ impl fmt::Display for Proposition {
         match self {
             Proposition::Expr(expr) => write!(f, "{}", expr),
             Proposition::Predicate(name, args) => {
-                write!(
-                    f,
-                    "{}",
-                    Proposition::format_predicate(name, args, |e| e.to_string())
-                )
+                write!(f, "{}", Proposition::format_predicate_display(name, args))
             }
             Proposition::Implication(p, q) => {
                 write!(f, "({})#==>({})", p, q)
@@ -336,9 +361,7 @@ impl ToLean for Proposition {
     fn to_lean(&self) -> String {
         match self {
             Proposition::Expr(expr) => expr.to_lean(),
-            Proposition::Predicate(name, args) => {
-                Proposition::format_predicate(name, args, |e| e.to_lean())
-            }
+            Proposition::Predicate(name, args) => Proposition::format_predicate_lean(name, args),
             Proposition::Implication(p, q) => {
                 format!("({} → {})", p.to_lean(), q.to_lean())
             }
@@ -390,11 +413,7 @@ impl fmt::Display for Expression {
                 write!(f, "{}({})", op, expr)
             }
             Expression::Constructor(name, args) => {
-                write!(
-                    f,
-                    "{}",
-                    Proposition::format_constructor(name, args, |e| e.to_string())
-                )
+                write!(f, "{}", Proposition::format_constructor_display(name, args))
             }
             Expression::Tuple(elements) => {
                 write!(
@@ -432,9 +451,7 @@ impl ToLean for Expression {
             Expression::UnaryOp(op, expr) => {
                 format!("{}({})", op.to_lean(), expr.to_lean())
             }
-            Expression::Constructor(name, args) => {
-                Proposition::format_constructor(name, args, |e| e.to_lean())
-            }
+            Expression::Constructor(name, args) => Proposition::format_constructor_lean(name, args),
             Expression::Tuple(elements) => {
                 format!(
                     "({})",
