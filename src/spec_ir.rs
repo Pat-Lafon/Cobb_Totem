@@ -232,7 +232,7 @@ impl Proposition {
         }
     }
 
-    /// Format a constructor for OCaml display (no leading dot for standard OCaml syntax)
+    /// Format a constructor for OCaml display
     fn format_constructor_display(name: &ConstructorName, args: &[Expression]) -> String {
         let name_str = name.to_string();
         if args.is_empty() {
@@ -242,8 +242,8 @@ impl Proposition {
                 .iter()
                 .map(|e| e.to_string())
                 .collect::<Vec<_>>()
-                .join(" ");
-            format!("({} {})", name_str, args_str)
+                .join(", ");
+            format!("({}({}))", name_str, args_str)
         }
     }
 
