@@ -511,7 +511,10 @@ pub fn create_ilist_type() -> prog_ir::TypeDecl {
             },
             prog_ir::Variant {
                 name: "Cons".to_string(),
-                fields: vec![Type::Int, Type::Named("ilist".to_string())],
+                fields: vec![
+                    ("head".to_string(), Type::Int),
+                    ("tail".to_string(), Type::Named("ilist".to_string())),
+                ],
             },
         ],
         attributes: vec!["grind".to_string()],

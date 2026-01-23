@@ -342,7 +342,7 @@ impl TypeDecl {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Variant {
     pub name: String,
-    pub fields: Vec<Type>,
+    pub fields: Vec<(String, Type)>,
 }
 
 impl fmt::Display for Variant {
@@ -352,13 +352,13 @@ impl fmt::Display for Variant {
         } else {
             write!(
                 f,
-                "{} of {}",
+                "{} of {{ {} }}",
                 self.name,
                 self.fields
                     .iter()
-                    .map(ToString::to_string)
+                    .map(|(name, ty)| format!("{} : {}", name, ty))
                     .collect::<Vec<_>>()
-                    .join(" * ")
+                    .join("; ")
             )
         }
     }
@@ -373,7 +373,7 @@ impl Variant {
             let field_strs: Vec<String> = self
                 .fields
                 .iter()
-                .map(|f| f.to_lean())
+                .map(|(_, ty)| ty.to_lean())
                 .chain(std::iter::once(return_type.to_string()))
                 .collect();
             let type_sig = field_strs.join(" → ");
@@ -838,14 +838,17 @@ mod tests {
                 },
                 Variant {
                     name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("int list".to_string())],
+                    fields: vec![
+                        ("head".to_string(), Type::Int),
+                        ("mytail".to_string(), Type::Named("int list".to_string())),
+                    ],
                 },
             ],
             attributes: vec![],
         };
         assert_eq!(
             ilist.to_string(),
-            "type ilist = Nil | Cons of int * int list"
+            "type ilist = Nil | Cons of { head : int; mytail : int list }"
         );
     }
 
@@ -926,7 +929,7 @@ mod tests {
                 },
                 Variant {
                     name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("ilist".to_string())],
+                    fields: vec![("head".to_string(), Type::Int), ("tail".to_string(), Type::Named("ilist".to_string()))],
                 },
             ],
             attributes: vec!["grind".to_string()],
@@ -963,9 +966,9 @@ mod tests {
                 Variant {
                     name: "Node".to_string(),
                     fields: vec![
-                        Type::Int,
-                        Type::Named("tree".to_string()),
-                        Type::Named("tree".to_string()),
+                        ("root".to_string(), Type::Int),
+                        ("left".to_string(), Type::Named("tree".to_string())),
+                        ("right".to_string(), Type::Named("tree".to_string())),
                     ],
                 },
             ],

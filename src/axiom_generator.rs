@@ -79,7 +79,7 @@ impl AxiomGenerator {
                     .variants
                     .iter()
                     .find(|variant| variant.name == constructor_name)
-                    .and_then(|variant| variant.fields.get(field_index).cloned())
+                    .and_then(|variant| variant.fields.get(field_index).map(|(_, ty)| ty.clone()))
             })
             .unwrap_or_else(|| {
                 panic!(

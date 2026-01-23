@@ -380,9 +380,9 @@ mod tests {
                 Variant {
                     name: "Node".to_string(),
                     fields: vec![
-                        Type::Int,
-                        Type::Named("tree".to_string()),
-                        Type::Named("tree".to_string()),
+                        ("0".to_string(), Type::Int),
+                        ("1".to_string(), Type::Named("tree".to_string())),
+                        ("2".to_string(), Type::Named("tree".to_string())),
                     ],
                 },
             ],

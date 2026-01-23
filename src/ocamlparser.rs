@@ -53,6 +53,82 @@ impl OcamlParser {
         );
     }
 
+    /// Parse a record_declaration node to extract field names and types.
+    /// Example: "{ value : int; left : tree; right : tree }"
+    /// Returns a vector of (field_name, Type) pairs.
+    fn parse_record_declaration(&self, record_node: Node) -> Vec<(String, Type)> {
+        let mut fields = Vec::new();
+        let mut cursor = record_node.walk();
+        assert!(
+            cursor.goto_first_child(),
+            "record_declaration has no children"
+        );
+
+        // Skip opening brace
+        assert_eq!(cursor.node().kind(), "{");
+        assert!(cursor.goto_next_sibling(), "record_declaration is empty");
+
+        loop {
+            let node = cursor.node();
+            match node.kind() {
+                "field_declaration" => {
+                    // Parse field_declaration: name : type
+                    let mut field_cursor = node.walk();
+                    assert!(
+                        field_cursor.goto_first_child(),
+                        "field_declaration has no children"
+                    );
+
+                    let field_name_node = field_cursor.node();
+                    assert_eq!(field_name_node.kind(), "field_name");
+                    let field_name = field_name_node
+                        .utf8_text(self.source.as_bytes())
+                        .unwrap_or_else(|e| panic!("Failed to extract field name: {}", e))
+                        .to_string();
+
+                    assert!(
+                        field_cursor.goto_next_sibling(),
+                        "field_declaration missing ':'"
+                    );
+                    assert_eq!(field_cursor.node().kind(), ":");
+
+                    assert!(
+                        field_cursor.goto_next_sibling(),
+                        "field_declaration missing type"
+                    );
+                    let type_node = field_cursor.node();
+                    assert!(
+                        type_node.kind() == "type_constructor_path"
+                            || type_node.kind() == "constructed_type",
+                        "Expected type in field_declaration, got '{}'",
+                        type_node.kind()
+                    );
+                    let field_type = self.parse_type(type_node);
+                    fields.push((field_name, field_type));
+                }
+                "}" => {
+                    break;
+                }
+                ";" => {
+                    // Separator, move to next field
+                    assert!(cursor.goto_next_sibling(), "Expected field after semicolon");
+                    continue;
+                }
+                kind => {
+                    panic!(
+                        "Unexpected node in record_declaration: '{}'",
+                        kind
+                    );
+                }
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+
+        fields
+    }
+
     /// Helper: parse attributes from the current node and advance cursor.
     /// Returns a vector of cleaned attribute names (without [@...] brackets).
     /// Assumes cursor is at an "attribute" node; after execution, cursor is at the next sibling.
@@ -334,33 +410,41 @@ impl OcamlParser {
             "Expected at least one field in constructor"
         );
 
-        // Parse first field
         let child = cursor.node();
-        assert!(
-            child.kind() == "type_constructor_path" || child.kind() == "constructed_type",
-            "Expected field, got '{}'",
-            child.kind()
-        );
-        fields.push(self.parse_type(child));
+        match child.kind() {
+            "record_declaration" => {
+                // Record-style fields: { name : type; ... }
+                fields = self.parse_record_declaration(child);
+            }
+            "type_constructor_path" | "constructed_type" => {
+                // Tuple-style fields: type * type * ...
+                let field_type = self.parse_type(child);
+                fields.push((fields.len().to_string(), field_type));
 
-        // Parse remaining fields with separators
-        while cursor.goto_next_sibling() {
-            let child = cursor.node();
-            match child.kind() {
-                "*" => {
-                    assert!(cursor.goto_next_sibling(), "Expected field after separator");
-                    let field = cursor.node();
-                    assert!(
-                        field.kind() == "type_constructor_path"
-                            || field.kind() == "constructed_type",
-                        "Expected field after separator, got '{}'",
-                        field.kind()
-                    );
-                    fields.push(self.parse_type(field));
+                // Parse remaining fields with separators
+                while cursor.goto_next_sibling() {
+                    let child = cursor.node();
+                    match child.kind() {
+                        "*" => {
+                            assert!(cursor.goto_next_sibling(), "Expected field after separator");
+                            let field = cursor.node();
+                            assert!(
+                                field.kind() == "type_constructor_path"
+                                    || field.kind() == "constructed_type",
+                                "Expected field after separator, got '{}'",
+                                field.kind()
+                            );
+                            let field_type = self.parse_type(field);
+                            fields.push((fields.len().to_string(), field_type));
+                        }
+                        kind => {
+                            panic!("Expected separator, got '{}'", kind);
+                        }
+                    }
                 }
-                kind => {
-                    panic!("Expected separator, got '{}'", kind);
-                }
+            }
+            kind => {
+                panic!("Expected field or record_declaration, got '{}'", kind);
             }
         }
 
@@ -1153,7 +1237,7 @@ mod tests {
                 },
                 Variant {
                     name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("int list".to_string())],
+                    fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
                 },
             ],
             attributes: vec![],
@@ -1176,7 +1260,7 @@ mod tests {
                 },
                 Variant {
                     name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("int list".to_string())],
+                    fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
                 },
             ],
             attributes: vec!["simp".to_string()],
@@ -1199,7 +1283,7 @@ mod tests {
                 },
                 Variant {
                     name: "Cons".to_string(),
-                    fields: vec![Type::Int, Type::Named("int list".to_string())],
+                    fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
                 },
             ],
             attributes: vec!["simp".to_string(), "reflect".to_string()],
@@ -1217,8 +1301,63 @@ mod tests {
             name: "triple".to_string(),
             variants: vec![Variant {
                 name: "Triple".to_string(),
-                fields: vec![Type::Int, Type::Named("ilist".to_string()), Type::Bool],
+                fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("ilist".to_string())), ("2".to_string(), Type::Bool)],
             }],
+            attributes: vec![],
+        })];
+
+        assert_eq!(parser.parse(&tree).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_type_constructor_with_record_fields() {
+        let source = "type node = Node of { value : int; left : tree; right : tree }";
+        let (parser, tree) = OcamlParser::parse_source(source).unwrap();
+
+        let expected = vec![AstNode::TypeDeclaration(TypeDecl {
+            name: "node".to_string(),
+            variants: vec![Variant {
+                name: "Node".to_string(),
+                fields: vec![
+                    ("value".to_string(), Type::Int),
+                    ("left".to_string(), Type::Named("tree".to_string())),
+                    ("right".to_string(), Type::Named("tree".to_string())),
+                ],
+            }],
+            attributes: vec![],
+        })];
+
+        assert_eq!(parser.parse(&tree).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_parse_mixed_constructors_record_and_tuple() {
+        let source = "type expr = Const of int | BinOp of { left : expr; op : string; right : expr } | FuncCall of { name : string; args : expr list }";
+        let (parser, tree) = OcamlParser::parse_source(source).unwrap();
+
+        let expected = vec![AstNode::TypeDeclaration(TypeDecl {
+            name: "expr".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Const".to_string(),
+                    fields: vec![("0".to_string(), Type::Int)],
+                },
+                Variant {
+                    name: "BinOp".to_string(),
+                    fields: vec![
+                        ("left".to_string(), Type::Named("expr".to_string())),
+                        ("op".to_string(), Type::Named("string".to_string())),
+                        ("right".to_string(), Type::Named("expr".to_string())),
+                    ],
+                },
+                Variant {
+                    name: "FuncCall".to_string(),
+                    fields: vec![
+                        ("name".to_string(), Type::Named("string".to_string())),
+                        ("args".to_string(), Type::Named("expr list".to_string())),
+                    ],
+                },
+            ],
             attributes: vec![],
         })];
 
@@ -1379,7 +1518,7 @@ mod tests {
                     },
                     Variant {
                         name: "Cons".to_string(),
-                        fields: vec![Type::Int, Type::Named("int list".to_string())],
+                        fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
                     },
                 ],
                 attributes: vec![],
@@ -1766,7 +1905,7 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest)
                     },
                     Variant {
                         name: "Cons".to_string(),
-                        fields: vec![Type::Int, Type::Named("int list".to_string())],
+                        fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
                     },
                 ],
                 attributes: vec!["simp".to_string()],
