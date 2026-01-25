@@ -4,7 +4,7 @@ use itertools::Itertools;
 
 use crate::VarName;
 use crate::axiom_builder_state::{AxiomBuilderState, BodyPropositionData};
-use crate::create_wrapper::{RESULT_PARAM, wrapper_name};
+use crate::create_wrapper::RESULT_PARAM;
 use crate::prog_ir::{LetBinding, Type, TypeDecl};
 use crate::spec_ir::{Expression, Parameter, Proposition};
 
@@ -33,7 +33,7 @@ pub struct AxiomGenerator {
 
 impl AxiomGenerator {
     /// Create a new AxiomGenerator with the given type constructors
-    pub fn new(type_constructors: Vec<TypeDecl>) -> Self {
+    pub(crate) fn new(type_constructors: Vec<TypeDecl>) -> Self {
         Self {
             type_constructors,
             var_counter: 0,
@@ -215,7 +215,7 @@ impl AxiomGenerator {
     }
 
     /// Prepare a function for batch axiom generation
-    pub fn prepare_function(&mut self, binding: &LetBinding) -> Result<(), String> {
+    pub(crate) fn prepare_function(&mut self, binding: &LetBinding) -> Result<(), String> {
         // Validate that binding has a return type annotation
         if binding.return_type.is_none() {
             return Err(format!(
@@ -328,7 +328,6 @@ impl AxiomGenerator {
                     ),
                 };
 
-                // Create a wrapper predicate with an existential parameter for function applications
                 let combined = self
                     .extract_exprs_with_steps(arg_exprs.iter().collect())
                     .unwrap_or_else(|e| panic!("Application argument: {}", e));
@@ -338,15 +337,14 @@ impl AxiomGenerator {
                     let exists_var = self.next_var();
                     let existential = Expression::Variable(exists_var.clone());
 
-                    let func_name_wrapper = wrapper_name(&func_name);
-                    extraction.expressions.push(existential.clone());
-
                     // Flatten all preceding steps from arguments
                     let mut proposition_steps = extraction.preceding_steps.concat();
-                    proposition_steps.push(Proposition::Predicate(
-                        func_name_wrapper,
-                        extraction.expressions,
-                    ));
+
+                    // Create predicate with function arguments plus result variable
+                    let mut predicate_args = extraction.expressions;
+                    predicate_args.push(existential.clone());
+                    proposition_steps
+                        .push(Proposition::Predicate(func_name.0.clone(), predicate_args));
                     proposition_steps.push(Proposition::Expr(existential.clone()));
 
                     // Look up the function's return type if available
@@ -506,7 +504,7 @@ impl AxiomGenerator {
 
     /// Build a configured AxiomBuilderState from all prepared functions
     /// The builder contains the prepared functions and can be used to generate axioms
-    pub fn build_all(&self) -> AxiomBuilderState {
+    pub(crate) fn build_all(&self) -> AxiomBuilderState {
         AxiomBuilderState::new(self.type_constructors.clone(), self.prepared.clone())
     }
 }
@@ -533,7 +531,7 @@ mod tests {
             props[1].iter().map(|p| p.to_lean()).collect_vec(),
             vec![
                 "(l = (.Cons h t))",
-                "(all_positive_wrapper t res_0)",
+                "(all_positive t res_0)",
                 "(((h > 0) ∧ res_0) = res)"
             ]
         );
@@ -555,7 +553,7 @@ mod tests {
             props[1].iter().map(|p| p.to_lean()).collect_vec(),
             vec![
                 "(l = (.Cons h t))",
-                "(mem_wrapper x t res_0)",
+                "(mem x t res_0)",
                 "(((h = x) ∨ res_0) = res)"
             ]
         );
@@ -577,7 +575,7 @@ mod tests {
             props[1].iter().map(|p| p.to_lean()).collect_vec(),
             vec![
                 "(l = (.Cons h t))",
-                "(all_eq_wrapper t x res_0)",
+                "(all_eq t x res_0)",
                 "(((h = x) ∧ res_0) = res)"
             ]
         );
@@ -599,7 +597,7 @@ mod tests {
             props[1].iter().map(|p| p.to_lean()).collect_vec(),
             vec![
                 "(l = (.Cons x xs))",
-                "(len_wrapper xs res_0)",
+                "(len xs res_0)",
                 "((1 + res_0) = res)"
             ]
         );
@@ -630,7 +628,7 @@ mod tests {
             vec![
                 "(l = (.Cons x xs))",
                 "(xs = (.Cons y ys))",
-                "(sorted_wrapper xs res_0)",
+                "(sorted xs res_0)",
                 "(((x ≤ y) ∧ res_0) = res)"
             ]
         );
@@ -680,10 +678,10 @@ mod tests {
             props[1].iter().map(|p| p.to_lean()).collect_vec(),
             vec![
                 "(t = (.Node v l r))",
-                "(height_wrapper l res_0)",
-                "(height_wrapper r res_1)",
+                "(height l res_0)",
+                "(height r res_1)",
                 "((res_0 > res_1) = true)",
-                "(height_wrapper l res_2)",
+                "(height l res_2)",
                 "((1 + res_2) = res)"
             ]
         );
@@ -693,10 +691,10 @@ mod tests {
             props[2].iter().map(|p| p.to_lean()).collect_vec(),
             vec![
                 "(t = (.Node v l r))",
-                "(height_wrapper l res_0)",
-                "(height_wrapper r res_1)",
+                "(height l res_0)",
+                "(height r res_1)",
                 "((res_0 > res_1) = false)",
-                "(height_wrapper r res_3)",
+                "(height r res_3)",
                 "((1 + res_3) = res)"
             ]
         );

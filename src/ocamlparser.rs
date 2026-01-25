@@ -12,11 +12,11 @@ pub struct OcamlParser {
 }
 
 impl OcamlParser {
-    pub fn new(source: String) -> Self {
+    pub(crate) fn new(source: String) -> Self {
         OcamlParser { source }
     }
 
-    pub fn parse_source(
+    pub(crate) fn parse_source(
         source: &str,
     ) -> Result<(Self, tree_sitter::Tree), Box<dyn std::error::Error>> {
         let mut parser = tree_sitter::Parser::new();
@@ -30,7 +30,7 @@ impl OcamlParser {
     }
 
     /// Parse OCaml source code and return all AstNodes
-    pub fn parse_nodes(source: &str) -> Result<Vec<AstNode>, Box<dyn std::error::Error>> {
+    pub(crate) fn parse_nodes(source: &str) -> Result<Vec<AstNode>, Box<dyn std::error::Error>> {
         let (parser, tree) = Self::parse_source(source)?;
         parser.parse(&tree)
     }
@@ -115,10 +115,7 @@ impl OcamlParser {
                     continue;
                 }
                 kind => {
-                    panic!(
-                        "Unexpected node in record_declaration: '{}'",
-                        kind
-                    );
+                    panic!("Unexpected node in record_declaration: '{}'", kind);
                 }
             }
             if !cursor.goto_next_sibling() {
@@ -1237,7 +1234,10 @@ mod tests {
                 },
                 Variant {
                     name: "Cons".to_string(),
-                    fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
+                    fields: vec![
+                        ("0".to_string(), Type::Int),
+                        ("1".to_string(), Type::Named("int list".to_string())),
+                    ],
                 },
             ],
             attributes: vec![],
@@ -1260,7 +1260,10 @@ mod tests {
                 },
                 Variant {
                     name: "Cons".to_string(),
-                    fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
+                    fields: vec![
+                        ("0".to_string(), Type::Int),
+                        ("1".to_string(), Type::Named("int list".to_string())),
+                    ],
                 },
             ],
             attributes: vec!["simp".to_string()],
@@ -1283,7 +1286,10 @@ mod tests {
                 },
                 Variant {
                     name: "Cons".to_string(),
-                    fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
+                    fields: vec![
+                        ("0".to_string(), Type::Int),
+                        ("1".to_string(), Type::Named("int list".to_string())),
+                    ],
                 },
             ],
             attributes: vec!["simp".to_string(), "reflect".to_string()],
@@ -1301,7 +1307,11 @@ mod tests {
             name: "triple".to_string(),
             variants: vec![Variant {
                 name: "Triple".to_string(),
-                fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("ilist".to_string())), ("2".to_string(), Type::Bool)],
+                fields: vec![
+                    ("0".to_string(), Type::Int),
+                    ("1".to_string(), Type::Named("ilist".to_string())),
+                    ("2".to_string(), Type::Bool),
+                ],
             }],
             attributes: vec![],
         })];
@@ -1518,7 +1528,10 @@ mod tests {
                     },
                     Variant {
                         name: "Cons".to_string(),
-                        fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
+                        fields: vec![
+                            ("0".to_string(), Type::Int),
+                            ("1".to_string(), Type::Named("int list".to_string())),
+                        ],
                     },
                 ],
                 attributes: vec![],
@@ -1905,7 +1918,10 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest)
                     },
                     Variant {
                         name: "Cons".to_string(),
-                        fields: vec![("0".to_string(), Type::Int), ("1".to_string(), Type::Named("int list".to_string()))],
+                        fields: vec![
+                            ("0".to_string(), Type::Int),
+                            ("1".to_string(), Type::Named("int list".to_string())),
+                        ],
                     },
                 ],
                 attributes: vec!["simp".to_string()],

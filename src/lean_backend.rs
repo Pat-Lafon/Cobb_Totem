@@ -203,7 +203,9 @@ impl LeanContextBuilder {
                         output.push_str(theorems);
                     }
                 }
-                other => output.push_str(&other.to_lean()),
+                AstNode::LetBinding(binding) => {
+                    output.push_str(&binding.to_lean());
+                }
             }
             output.push_str("\n\n");
         }
@@ -213,7 +215,7 @@ impl LeanContextBuilder {
             output.push_str("\n\n");
         }
 
-        output
+        output.trim_end().to_string()
     }
 }
 
@@ -226,7 +228,26 @@ mod tests {
     };
 
     use super::*;
-    use crate::spec_ir;
+
+    fn create_ilist_type() -> TypeDecl {
+        TypeDecl {
+            name: "ilist".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Nil".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "Cons".to_string(),
+                    fields: vec![
+                        ("head".to_string(), Type::Int),
+                        ("tail".to_string(), Type::Named("ilist".to_string())),
+                    ],
+                },
+            ],
+            attributes: vec!["grind".to_string()],
+        }
+    }
 
     fn create_len_function() -> LetBinding {
         let code = r#"
@@ -277,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_ilist_type() {
-        let ilist_type = spec_ir::create_ilist_type();
+        let ilist_type = create_ilist_type();
 
         let lean_code = ilist_type.to_lean();
         assert_eq!(
@@ -290,7 +311,7 @@ mod tests {
 
     #[test]
     fn test_len_function() {
-        let ilist_type = spec_ir::create_ilist_type();
+        let ilist_type = create_ilist_type();
         let len_function = create_len_function();
 
         let lean_code = format!("{}\n\n{}", ilist_type.to_lean(), len_function.to_lean());
@@ -338,7 +359,7 @@ mod tests {
 
     #[test]
     fn test_ilist_with_lawful_beq() {
-        let ilist_type = spec_ir::create_ilist_type();
+        let ilist_type = create_ilist_type();
 
         let inductive_def = ilist_type.to_lean();
         let lawful_support = ilist_type.generate_complete_lawful_beq();
@@ -351,7 +372,7 @@ mod tests {
 
     #[test]
     fn test_context_builder_with_ilist_and_functions() {
-        let ilist_type = spec_ir::create_ilist_type();
+        let ilist_type = create_ilist_type();
         let len_function = create_len_function();
 
         let builder = LeanContextBuilder::new().with_nodes(vec![
@@ -368,7 +389,7 @@ mod tests {
 
     #[test]
     fn test_context_builder_with_multiple_types() {
-        let ilist_type = spec_ir::create_ilist_type();
+        let ilist_type = create_ilist_type();
 
         let tree_type = TypeDecl {
             name: "tree".to_string(),

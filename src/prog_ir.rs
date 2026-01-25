@@ -366,7 +366,7 @@ impl fmt::Display for Variant {
 
 impl Variant {
     /// Convert variant to Lean syntax with the return type
-    pub fn to_lean_with_type(&self, return_type: &str) -> String {
+    pub(crate) fn to_lean_with_type(&self, return_type: &str) -> String {
         if self.fields.is_empty() {
             self.name.clone()
         } else {
@@ -929,7 +929,10 @@ mod tests {
                 },
                 Variant {
                     name: "Cons".to_string(),
-                    fields: vec![("head".to_string(), Type::Int), ("tail".to_string(), Type::Named("ilist".to_string()))],
+                    fields: vec![
+                        ("head".to_string(), Type::Int),
+                        ("tail".to_string(), Type::Named("ilist".to_string())),
+                    ],
                 },
             ],
             attributes: vec!["grind".to_string()],

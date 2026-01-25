@@ -1,7 +1,6 @@
 #[cfg(test)]
 mod integration_tests {
     use crate::axiom_generator::AxiomGenerator;
-    use crate::create_wrapper;
     use crate::lean_backend::LeanContextBuilder;
     use crate::lean_validation::validate_lean_code;
     use crate::ocamlparser::OcamlParser;
@@ -37,10 +36,10 @@ mod integration_tests {
             generator
                 .prepare_function(&function)
                 .expect("Failed to prepare function");
-
-            let wrapper = create_wrapper::create_wrapper(&function);
-            all_nodes.push(AstNode::LetBinding(wrapper));
         }
+
+        // Wrap all functions with impl+wrapper
+        all_nodes = crate::wrap_all_functions(all_nodes);
 
         // Build all axioms at once
         let builder = generator.build_all();

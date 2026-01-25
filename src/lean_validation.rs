@@ -8,7 +8,7 @@ fn debug_enabled() -> bool {
 }
 
 /// Validate generated Lean code by running the lean type checker via stdin
-pub fn validate_lean_code(code: &str) -> Result<(), String> {
+pub(crate) fn validate_lean_code(code: &str) -> Result<(), String> {
     if debug_enabled() {
         debug_print_lean(code);
     }
@@ -69,7 +69,7 @@ pub fn validate_lean_code(code: &str) -> Result<(), String> {
 }
 
 /// Print generated Lean code for debugging
-pub fn debug_print_lean(code: &str) {
+pub(crate) fn debug_print_lean(code: &str) {
     // Limit output to prevent spam from very large code
     const MAX_DEBUG_LINES: usize = 1000;
     let line_count = code.lines().count();

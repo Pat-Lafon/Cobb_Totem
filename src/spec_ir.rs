@@ -2,8 +2,7 @@ use std::fmt;
 
 use crate::{
     Literal, ToLean, VarName,
-    ocamlparser::OcamlParser,
-    prog_ir::{self, BinaryOp, ConstructorName, Type, UnaryOp},
+    prog_ir::{BinaryOp, ConstructorName, Type, UnaryOp},
 };
 
 /// A specification axiom that can be translated to Lean theorems
@@ -45,7 +44,7 @@ pub enum Proposition {
     /// A bare expression
     Expr(Expression),
 
-    /// A predicate application: emp l, hd l x, tl l l1, len l n
+    /// A predicate application: is_nil l, hd l x, tl l l1, len l res
     Predicate(String, Vec<Expression>),
 
     /// Implication: p #==> q
@@ -262,68 +261,10 @@ impl Proposition {
         }
     }
 
-    /// Fold over the structure of a proposition, applying a transformation function at each node.
-    /// The transformation function receives the current proposition and must return the transformed result.
-    /// This enables bottom-up structural transformations on the proposition tree.
-    pub fn fold<F>(self, f: &F) -> Proposition
-    where
-        F: Fn(Proposition) -> Proposition,
-    {
-        let folded = match self {
-            Proposition::Expr(expr) => Proposition::Expr(expr),
-            Proposition::Predicate(name, args) => Proposition::Predicate(name, args),
-            Proposition::Implication(ant, cons) => {
-                Proposition::Implication(Box::new(ant.fold(f)), Box::new(cons.fold(f)))
-            }
-            Proposition::Equality(left, right) => {
-                Proposition::Equality(Box::new(left.fold(f)), Box::new(right.fold(f)))
-            }
-            Proposition::And(left, right) => {
-                Proposition::And(Box::new(left.fold(f)), Box::new(right.fold(f)))
-            }
-            Proposition::Or(left, right) => {
-                Proposition::Or(Box::new(left.fold(f)), Box::new(right.fold(f)))
-            }
-            Proposition::Not(inner) => Proposition::Not(Box::new(inner.fold(f))),
-            Proposition::Iff(left, right) => {
-                Proposition::Iff(Box::new(left.fold(f)), Box::new(right.fold(f)))
-            }
-        };
-        f(folded)
-    }
-
-    pub fn as_expr(&self) -> &Expression {
+    pub(crate) fn as_expr(&self) -> &Expression {
         match self {
             Proposition::Expr(expression) => expression,
             _ => panic!("Expected Proposition::Expr, got {:?}", self),
-        }
-    }
-
-    /// Validate that this proposition does not contain Implication or Equality propositions.
-    /// Panics with descriptive messages if violations are found.
-    /// Assumes that step propositions should only contain: Expr, Predicate, And, Or, Not, Iff.
-    pub fn assert_no_implications_or_equalities(&self) {
-        match self {
-            Proposition::Implication(_, _) => panic!(
-                "Steps should not contain Implication propositions; these are composed after augmentation"
-            ),
-            Proposition::Equality(_, _) => panic!(
-                "Steps should not contain Equality propositions; only expressions can be equalities"
-            ),
-            Proposition::And(left, right) => {
-                left.assert_no_implications_or_equalities();
-                right.assert_no_implications_or_equalities();
-            }
-            Proposition::Or(left, right) => {
-                left.assert_no_implications_or_equalities();
-                right.assert_no_implications_or_equalities();
-            }
-            Proposition::Not(inner) => inner.assert_no_implications_or_equalities(),
-            Proposition::Iff(left, right) => {
-                left.assert_no_implications_or_equalities();
-                right.assert_no_implications_or_equalities();
-            }
-            _ => {}
         }
     }
 }
@@ -381,23 +322,6 @@ impl ToLean for Proposition {
                 format!("({} ↔ {})", p.to_lean(), q.to_lean())
             }
         }
-    }
-}
-
-impl Expression {
-    /// Check if an expression is a comparison/equality (pattern constraint), not arithmetic
-    pub fn is_comparison(&self) -> bool {
-        matches!(
-            self,
-            Expression::BinaryOp(_, op, _) if matches!(
-                op,
-                BinaryOp::Eq
-                    | BinaryOp::Lt
-                    | BinaryOp::Gt
-                    | BinaryOp::Lte
-                    | BinaryOp::Gte
-            )
-        )
     }
 }
 
@@ -481,12 +405,40 @@ impl ToLean for Expression {
     }
 }
 
-/// Helper functions to parse predicate definitions for the ilist datatype
-pub mod predicates {
+#[cfg(test)]
+mod tests {
     use super::*;
 
-    pub const PRELUDE: &str = "type [@grind] ilist = Nil | Cons of int * ilist
-let [@simp] [@grind] emp (l : ilist) : bool = match l with | Nil -> true | Cons (_, _) -> false
+    use crate::{lean_validation::validate_lean_code, ocamlparser::OcamlParser, prog_ir};
+
+    /// Helper to create an ilist type definition with @[grind] annotation
+    fn create_ilist_type() -> prog_ir::TypeDecl {
+        prog_ir::TypeDecl {
+            name: "ilist".to_string(),
+            variants: vec![
+                prog_ir::Variant {
+                    name: "Nil".to_string(),
+                    fields: vec![],
+                },
+                prog_ir::Variant {
+                    name: "Cons".to_string(),
+                    fields: vec![
+                        ("head".to_string(), Type::Int),
+                        ("tail".to_string(), Type::Named("ilist".to_string())),
+                    ],
+                },
+            ],
+            attributes: vec!["grind".to_string()],
+        }
+    }
+
+    /// Helper functions to parse predicate definitions for the ilist datatype
+    mod predicates {
+        use super::*;
+
+        // TODO: Why not automatically generate more of this?
+        pub const PRELUDE: &str = "type [@grind] ilist = Nil | Cons of int * ilist
+let [@simp] [@grind] is_nil (l : ilist) : bool = match l with | Nil -> true | Cons (_, _) -> false
 let [@simp] [@grind] hd (l : ilist) (x : int) : bool = match l with | Nil -> false | Cons (h, _) -> h = x
 let [@simp] [@grind] tl (l : ilist) (xs : ilist) : bool = match l with | Nil -> false | Cons (_, t) -> t = xs
 let [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons (_, xs) -> len xs (n - 1)
@@ -494,38 +446,10 @@ let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true 
 let [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t
 let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons (h, t) -> (h = x) && all_eq t x";
 
-    /// Parse all predicates and type definitions
-    pub fn parse_all() -> Result<Vec<prog_ir::AstNode>, Box<dyn std::error::Error>> {
-        OcamlParser::parse_nodes(PRELUDE)
+        pub fn parse_all() -> Result<Vec<prog_ir::AstNode>, Box<dyn std::error::Error>> {
+            OcamlParser::parse_nodes(PRELUDE)
+        }
     }
-}
-
-/// Helper to create an ilist type definition with @[grind] annotation
-pub fn create_ilist_type() -> prog_ir::TypeDecl {
-    prog_ir::TypeDecl {
-        name: "ilist".to_string(),
-        variants: vec![
-            prog_ir::Variant {
-                name: "Nil".to_string(),
-                fields: vec![],
-            },
-            prog_ir::Variant {
-                name: "Cons".to_string(),
-                fields: vec![
-                    ("head".to_string(), Type::Int),
-                    ("tail".to_string(), Type::Named("ilist".to_string())),
-                ],
-            },
-        ],
-        attributes: vec!["grind".to_string()],
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    use crate::lean_validation::validate_lean_code;
 
     /// Helper function to set up common test fixtures
     fn setup_ilist_context() -> (Vec<prog_ir::AstNode>, prog_ir::TypeDecl) {
@@ -540,16 +464,16 @@ mod tests {
         // Load the prelude predicates
         let (prelude_nodes, _) = setup_ilist_context();
 
-        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((emp l) → ¬(hd l x)))
+        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((is_nil l) → ¬(hd l x)))
         let axiom = Axiom {
-            name: "list_emp_no_hd".to_string(),
+            name: "list_is_nil_no_hd".to_string(),
             params: vec![
                 Parameter::universal("l", Type::Named("ilist".to_string())),
                 Parameter::universal("x", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
@@ -571,7 +495,7 @@ mod tests {
 
         // Verify the code structure before validation
         assert!(!lean_code.is_empty());
-        assert!(lean_code.contains("list_emp_no_hd"));
+        assert!(lean_code.contains("list_is_nil_no_hd"));
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
@@ -594,14 +518,14 @@ mod tests {
 
         // Create an axiom with BEq theorems
         let axiom = Axiom {
-            name: "list_emp_no_hd_with_beq".to_string(),
+            name: "list_is_nil_no_hd_with_beq".to_string(),
             params: vec![
                 Parameter::universal("l", Type::Named("ilist".to_string())),
                 Parameter::universal("x", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
@@ -625,7 +549,7 @@ mod tests {
 
         // Verify the code structure
         assert!(!lean_code.is_empty());
-        assert!(lean_code.contains("list_emp_no_hd_with_beq"));
+        assert!(lean_code.contains("list_is_nil_no_hd_with_beq"));
         assert!(lean_code.contains("beq_nil_nil"));
         assert!(lean_code.contains("beq_cons_cons"));
 
@@ -640,21 +564,21 @@ mod tests {
     }
 
     #[test]
-    fn test_axiom_list_emp_no_tl() {
+    fn test_axiom_list_is_nil_no_tl() {
         // Load the prelude predicates
         let prelude_nodes =
             predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
-        // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), ((emp l) → ¬(tl l l1)))
+        // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), ((is_nil l) → ¬(tl l l1)))
         let axiom = Axiom {
-            name: "list_emp_no_tl".to_string(),
+            name: "list_is_nil_no_tl".to_string(),
             params: vec![
                 Parameter::universal("l", Type::Named("ilist".to_string())),
                 Parameter::universal("l1", Type::Named("ilist".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
@@ -676,7 +600,7 @@ mod tests {
 
         // Verify the code structure before validation
         assert!(!lean_code.is_empty());
-        assert!(lean_code.contains("list_emp_no_tl"));
+        assert!(lean_code.contains("list_is_nil_no_tl"));
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
@@ -691,14 +615,14 @@ mod tests {
     }
 
     #[test]
-    fn test_axiom_list_hd_no_emp() {
+    fn test_axiom_list_hd_no_is_nil() {
         // Load the prelude predicates
         let prelude_nodes =
             predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
-        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((hd l x) → ¬(emp l)))
+        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((hd l x) → ¬(is_nil l)))
         let axiom = Axiom {
-            name: "list_hd_no_emp".to_string(),
+            name: "list_hd_no_is_nil".to_string(),
             params: vec![
                 Parameter::universal("l", Type::Named("ilist".to_string())),
                 Parameter::universal("x", Type::Named("Int".to_string())),
@@ -712,7 +636,7 @@ mod tests {
                     ],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )))),
             ),
@@ -727,7 +651,7 @@ mod tests {
 
         // Verify the code structure before validation
         assert!(!lean_code.is_empty());
-        assert!(lean_code.contains("list_hd_no_emp"));
+        assert!(lean_code.contains("list_hd_no_is_nil"));
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
@@ -741,14 +665,14 @@ mod tests {
     }
 
     #[test]
-    fn test_axiom_list_tl_no_emp() {
+    fn test_axiom_list_tl_no_is_nil() {
         // Load the prelude predicates
         let prelude_nodes =
             predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
-        // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), ((tl l l1) → ¬(emp l)))
+        // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), ((tl l l1) → ¬(is_nil l)))
         let axiom = Axiom {
-            name: "list_tl_no_emp".to_string(),
+            name: "list_tl_no_is_nil".to_string(),
             params: vec![
                 Parameter::universal("l", Type::Named("ilist".to_string())),
                 Parameter::universal("l1", Type::Named("ilist".to_string())),
@@ -762,7 +686,7 @@ mod tests {
                     ],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )))),
             ),
@@ -777,7 +701,7 @@ mod tests {
 
         // Verify the code structure before validation
         assert!(!lean_code.is_empty());
-        assert!(lean_code.contains("list_tl_no_emp"));
+        assert!(lean_code.contains("list_tl_no_is_nil"));
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
@@ -791,18 +715,18 @@ mod tests {
     }
 
     #[test]
-    fn test_axiom_list_len_0_emp() {
+    fn test_axiom_list_len_0_is_nil() {
         // Load the prelude predicates
         let prelude_nodes =
             predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
-        // Create an axiom: ∀ (l : ilist), ((emp l) → (len l 0))
+        // Create an axiom: ∀ (l : ilist), ((is_nil l) → (len l 0))
         let axiom = Axiom {
-            name: "list_len_0_emp".to_string(),
+            name: "list_len_0_is_nil".to_string(),
             params: vec![Parameter::universal("l", Type::Named("ilist".to_string()))],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Predicate(
@@ -824,7 +748,7 @@ mod tests {
 
         // Verify the code structure before validation
         assert!(!lean_code.is_empty());
-        assert!(lean_code.contains("list_len_0_emp"));
+        assert!(lean_code.contains("list_len_0_is_nil"));
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
@@ -838,14 +762,14 @@ mod tests {
     }
 
     #[test]
-    fn test_axiom_list_positive_len_is_not_emp() {
+    fn test_axiom_list_positive_len_is_not_is_nil() {
         // Load the prelude predicates
         let prelude_nodes =
             predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
-        // Create an axiom: ∀ (l : ilist), (∀ (n : Int), (((len l n) ∧ (n > 0)) → ¬(emp l)))
+        // Create an axiom: ∀ (l : ilist), (∀ (n : Int), (((len l n) ∧ (n > 0)) → ¬(is_nil l)))
         let axiom = Axiom {
-            name: "list_positive_len_is_not_emp".to_string(),
+            name: "list_positive_len_is_not_is_nil".to_string(),
             params: vec![
                 Parameter::universal("l", Type::Named("ilist".to_string())),
                 Parameter::universal("n", Type::Named("Int".to_string())),
@@ -866,7 +790,7 @@ mod tests {
                     ))),
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )))),
             ),
@@ -881,7 +805,7 @@ mod tests {
 
         // Verify the code structure before validation
         assert!(!lean_code.is_empty());
-        assert!(lean_code.contains("list_positive_len_is_not_emp"));
+        assert!(lean_code.contains("list_positive_len_is_not_is_nil"));
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
@@ -1029,18 +953,18 @@ mod tests {
     }
 
     #[test]
-    fn test_axiom_list_emp_sorted() {
+    fn test_axiom_list_is_nil_sorted() {
         // Load the prelude predicates
         let prelude_nodes =
             predicates::parse_all().unwrap_or_else(|e| panic!("Failed to parse prelude: {}", e));
 
-        // Create an axiom: ∀ (l : ilist), ((emp l) → (sorted l))
+        // Create an axiom: ∀ (l : ilist), ((is_nil l) → (sorted l))
         let axiom = Axiom {
-            name: "list_emp_sorted".to_string(),
+            name: "list_is_nil_sorted".to_string(),
             params: vec![Parameter::universal("l", Type::Named("ilist".to_string()))],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Predicate(
@@ -1061,7 +985,7 @@ mod tests {
 
         // Verify the code structure before validation
         assert!(!lean_code.is_empty());
-        assert!(lean_code.contains("list_emp_sorted"));
+        assert!(lean_code.contains("list_is_nil_sorted"));
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
@@ -1189,7 +1113,7 @@ mod tests {
     fn test_axiom_list_hd_sorted() {
         let (prelude_nodes, ilist_type) = setup_ilist_context();
 
-        // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (∀ (x : Int), (∀ (y : Int), (((tl l l1) ∧ (sorted l)) → ((emp l1) ∨ (((hd l1 y) ∧ (hd l x)) → (x <= y)))))))
+        // Create an axiom: ∀ (l : ilist), (∀ (l1 : ilist), (∀ (x : Int), (∀ (y : Int), (((tl l l1) ∧ (sorted l)) → ((is_nil l1) ∨ (((hd l1 y) ∧ (hd l x)) → (x <= y)))))))
         let axiom = Axiom {
             name: "list_hd_sorted".to_string(),
             params: vec![
@@ -1214,7 +1138,7 @@ mod tests {
                 )),
                 Box::new(Proposition::Or(
                     Box::new(Proposition::Predicate(
-                        "emp".to_string(),
+                        "is_nil".to_string(),
                         vec![Expression::Variable("l1".into())],
                     )),
                     Box::new(Proposition::Implication(
@@ -1353,9 +1277,9 @@ mod tests {
     fn test_axiom_list_mem() {
         let (prelude_nodes, ilist_type) = setup_ilist_context();
 
-        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((mem x l) → ¬(emp l)))
+        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((mem x l) → ¬(is_nil l)))
         let axiom = Axiom {
-            name: "list_mem_not_emp".to_string(),
+            name: "list_mem_not_is_nil".to_string(),
             params: vec![
                 Parameter::universal("l", Type::Named("ilist".to_string())),
                 Parameter::universal("x", Type::Named("Int".to_string())),
@@ -1369,7 +1293,7 @@ mod tests {
                     ],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )))),
             ),
@@ -1385,7 +1309,7 @@ mod tests {
 
         // Verify the code structure before validation
         assert!(!lean_code.is_empty());
-        assert!(lean_code.contains("list_mem_not_emp"));
+        assert!(lean_code.contains("list_mem_not_is_nil"));
         assert!(lean_code.contains("theorem"));
 
         // Validate the generated Lean code using the Lean backend
@@ -1402,7 +1326,7 @@ mod tests {
     fn test_axiom_list_all_eq() {
         let (prelude_nodes, ilist_type) = setup_ilist_context();
 
-        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((all_eq l x) → (emp l ∨ (hd l x))))
+        // Create an axiom: ∀ (l : ilist), (∀ (x : Int), ((all_eq l x) → (is_nil l ∨ (hd l x))))
         let axiom = Axiom {
             name: "list_all_eq_hd".to_string(),
             params: vec![
@@ -1419,7 +1343,7 @@ mod tests {
                 )),
                 Box::new(Proposition::Or(
                     Box::new(Proposition::Predicate(
-                        "emp".to_string(),
+                        "is_nil".to_string(),
                         vec![Expression::Variable("l".into())],
                     )),
                     Box::new(Proposition::Predicate(
@@ -1460,14 +1384,14 @@ mod tests {
     fn test_axiom_display_format() {
         // Create a simple axiom to test Display formatting
         let axiom = Axiom {
-            name: "list_emp_no_hd".to_string(),
+            name: "list_is_nil_no_hd".to_string(),
             params: vec![
                 Parameter::universal("l", Type::Named("ilist".to_string())),
                 Parameter::universal("x", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
                 Box::new(Proposition::Predicate(
-                    "emp".to_string(),
+                    "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
                 )),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
@@ -1484,7 +1408,7 @@ mod tests {
         let display_output = axiom.to_string();
         assert_eq!(
             display_output,
-            "let[@axiom] list_emp_no_hd (l : ilist) (x : Int) = ((emp l))#==>((not ((hd l x))))"
+            "let[@axiom] list_is_nil_no_hd (l : ilist) (x : Int) = ((is_nil l))#==>((not ((hd l x))))"
         );
     }
 
