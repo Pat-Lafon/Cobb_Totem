@@ -5,6 +5,9 @@ use crate::{
     prog_ir::{BinaryOp, ConstructorName, Type, UnaryOp},
 };
 
+/// Suffix for domain-specific axioms (e.g., non-negativity constraints)
+pub(crate) const DOMAIN_AXIOM_SUFFIX: &str = "_geq_0";
+
 /// A specification axiom that can be translated to Lean theorems
 #[derive(Debug, Clone)]
 pub struct Axiom {
@@ -31,7 +34,7 @@ impl ToLean for Quantifier {
 }
 
 /// A parameter in an axiom with its quantification mode
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Parameter {
     pub name: VarName,
     pub typ: Type,
@@ -64,10 +67,13 @@ pub enum Proposition {
 
     /// Bi-implication: iff p q
     Iff(Box<Proposition>, Box<Proposition>),
+
+    /// Existential quantification: ∃ x : type, body
+    Existential(Box<Parameter>, Box<Proposition>),
 }
 
 /// Expressions that appear as arguments to predicates
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Expression {
     /// Variable reference
     Variable(VarName),
@@ -96,6 +102,11 @@ pub enum Expression {
 
     /// Logical negation: not expr
     Not(Box<Expression>),
+
+    /// Field accessor: head l, tail l, field_0 t, etc.
+    /// First arg is the accessor name (e.g., "head", "tail")
+    /// Second arg is the expression to access (e.g., a list variable)
+    FieldAccess(String, Box<Expression>),
 }
 
 impl Parameter {
@@ -124,6 +135,49 @@ impl Parameter {
     }
 }
 
+impl Expression {
+    /// Check if an expression is a boolean-valued comparison or logical operation
+    pub(crate) fn is_boolean_expr(&self) -> bool {
+        matches!(
+            self,
+            Expression::BinaryOp(_, op, _) if matches!(op, BinaryOp::Lt | BinaryOp::Lte | BinaryOp::Gt | BinaryOp::Gte | BinaryOp::Eq | BinaryOp::Neq | BinaryOp::And | BinaryOp::Or)
+        )
+    }
+
+    /// Fold over the expression tree, visiting all sub-expressions
+    pub(crate) fn fold<T, F>(&self, init: T, f: &F) -> T
+    where
+        F: Fn(T, &Expression) -> T,
+    {
+        let t = match self {
+            Expression::BinaryOp(left, _, right) => {
+                let t = left.fold(init, f);
+                right.fold(t, f)
+            }
+            Expression::UnaryOp(_, e) => e.fold(init, f),
+            Expression::Constructor(_, args) => {
+                args.iter().fold(init, |t, arg| arg.fold(t, f))
+            }
+            Expression::Tuple(args) => {
+                args.iter().fold(init, |t, arg| arg.fold(t, f))
+            }
+            Expression::IfThenElse {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let t = condition.fold(init, f);
+                let t = then_branch.fold(t, f);
+                else_branch.fold(t, f)
+            }
+            Expression::Not(e) => e.fold(init, f),
+            Expression::FieldAccess(_, e) => e.fold(init, f),
+            _ => init,
+        };
+        f(t, self)
+    }
+}
+
 impl fmt::Display for Parameter {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         if self.quantifier == Quantifier::Existential {
@@ -146,26 +200,53 @@ impl ToLean for Parameter {
 }
 
 impl Axiom {
+    /// Check if this is a domain-specific axiom (e.g., non-negativity constraint)
+    pub fn is_domain_specific(&self) -> bool {
+        self.name.ends_with(DOMAIN_AXIOM_SUFFIX)
+    }
+
+    /// Count existential quantifiers in the proposition body
+    fn count_existentials_in_body(prop: &Proposition) -> usize {
+        match prop {
+            Proposition::Existential(_, body) => 1 + Self::count_existentials_in_body(body),
+            Proposition::Implication(p, q)
+            | Proposition::And(p, q)
+            | Proposition::Or(p, q)
+            | Proposition::Iff(p, q)
+            | Proposition::Equality(p, q) => {
+                Self::count_existentials_in_body(p) + Self::count_existentials_in_body(q)
+            }
+            Proposition::Not(p) => Self::count_existentials_in_body(p),
+            _ => 0,
+        }
+    }
+
     /// Suggests an appropriate proof tactic based on axiom characteristics.
-    /// Uses "aesop" for axioms with existential quantifiers, "grind" otherwise.
+    /// Uses case analysis for axioms with recursive predicates, simple tactics otherwise.
     pub fn suggest_proof_tactic(&self) -> String {
-        // Count existential quantifiers
-        let existential_count = self
-            .params
-            .iter()
-            .filter(|p| p.quantifier == Quantifier::Existential)
-            .count();
+        // Count existential quantifiers in the body
+        let existential_count = Self::count_existentials_in_body(&self.body);
 
         if existential_count > 0 {
-            let mut tactic =
-                "\ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros\n".to_string();
+            // For axioms with existentials, use case analysis on the main data structure parameter.
+            // Find the first non-primitive (Named) type parameter
+            let cases_param = self.params
+                .iter()
+                .find(|p| matches!(p.typ, Type::Named(_)))
+                .map(|p| p.name.0.clone())
+                .expect("Axioms with existentials must have a named/inductive type parameter");
 
-            // Generate refine/rotate_left pairs for each existential
-            for _ in 0..existential_count {
-                tactic.push_str("refine ⟨?_, ?_⟩\nrotate_left\n");
-            }
+            let mut tactic = "\ntry aesop (config := { maxRuleHeartbeats := 20000 })\n".to_string();
 
-            tactic.push_str("all_goals try grind\nall_goals try aesop\n");
+            // Introduce the main data structure parameter for case analysis
+            tactic.push_str(&format!("intros {}\n", cases_param));
+            // Use cases instead of induction
+            tactic.push_str(&format!("cases {} with\n", cases_param));
+            // Use generic patterns without hardcoding Nil/Cons
+            tactic.push_str("| _ => \n");
+            tactic.push_str("  simp_all\n");
+            tactic.push_str("  try grind\n");
+            tactic.push_str("  try aesop\n");
 
             tactic
         } else {
@@ -187,18 +268,27 @@ impl fmt::Display for Axiom {
 
 impl ToLean for Axiom {
     fn to_lean(&self) -> String {
-        let mut body_str = self.body.to_lean();
+        // Build quantified parameters: ∀ p1 : t1, ∀ p2 : t2, ... or ∃ p1 : t1, ∃ p2 : t2, ...
+        let params_str = self
+            .params
+            .iter()
+            .map(|p| p.to_lean())
+            .collect::<Vec<_>>()
+            .join(", ");
 
-        // Wrap body with all parameters (existential then universal)
-        for param in self.params.iter().rev() {
-            body_str = format!("{}, {}", param.to_lean(), body_str);
-        }
+        // Build the theorem statement: theorem name : ∀ params, body := proof
+        let body_str = self.body.to_lean();
+        let theorem_statement = if params_str.is_empty() {
+            body_str
+        } else {
+            format!("{}, {}", params_str, body_str)
+        };
 
         let proof = match self.proof.as_deref() {
             Some("sorry") | None => "sorry".to_string(),
             Some(p) => format!("by {}", p),
         };
-        format!("theorem {} : {} := {}", self.name, body_str, proof)
+        format!("theorem {} : {} := {}", self.name, theorem_statement, proof)
     }
 }
 
@@ -267,6 +357,70 @@ impl Proposition {
             _ => panic!("Expected Proposition::Expr, got {:?}", self),
         }
     }
+
+    /// Map a transformation function over a proposition, recursing post-order through the tree.
+    /// Post-order: children are recursively transformed before applying `f`.
+    pub(crate) fn map<F>(self, f: &F) -> Proposition
+    where
+        F: Fn(Proposition) -> Proposition,
+    {
+        let recursed = match self {
+            Proposition::Implication(p, q) => Proposition::Implication(
+                Box::new((*p).map(f)),
+                Box::new((*q).map(f)),
+            ),
+            Proposition::And(p, q) => Proposition::And(
+                Box::new((*p).map(f)),
+                Box::new((*q).map(f)),
+            ),
+            Proposition::Or(p, q) => Proposition::Or(
+                Box::new((*p).map(f)),
+                Box::new((*q).map(f)),
+            ),
+            Proposition::Not(p) => Proposition::Not(Box::new((*p).map(f))),
+            Proposition::Iff(p, q) => Proposition::Iff(
+                Box::new((*p).map(f)),
+                Box::new((*q).map(f)),
+            ),
+            Proposition::Existential(param, body) => Proposition::Existential(
+                param,
+                Box::new((*body).map(f)),
+            ),
+            other => other,
+        };
+
+        f(recursed)
+    }
+
+    /// Fold a proposition into an accumulated value, recursing post-order through the tree.
+    /// Post-order: children are folded before applying `f`.
+    pub(crate) fn fold<T, F>(&self, init: T, f: &F) -> T
+    where
+        F: Fn(T, &Proposition) -> T,
+    {
+        let t = match self {
+            Proposition::Implication(p, q) => {
+                let t = p.fold(init, f);
+                q.fold(t, f)
+            }
+            Proposition::And(p, q) => {
+                let t = p.fold(init, f);
+                q.fold(t, f)
+            }
+            Proposition::Or(p, q) => {
+                let t = p.fold(init, f);
+                q.fold(t, f)
+            }
+            Proposition::Not(p) => p.fold(init, f),
+            Proposition::Iff(p, q) => {
+                let t = p.fold(init, f);
+                q.fold(t, f)
+            }
+            Proposition::Existential(_, body) => body.fold(init, f),
+            _ => init,
+        };
+        f(t, self)
+    }
 }
 
 impl fmt::Display for Proposition {
@@ -294,6 +448,9 @@ impl fmt::Display for Proposition {
             Proposition::Iff(p, q) => {
                 write!(f, "(iff {} {})", p, q)
             }
+            Proposition::Existential(param, body) => {
+                write!(f, "fun (({} [@exists]) : {}) -> {}", param.name, param.typ, body)
+            }
         }
     }
 }
@@ -320,6 +477,14 @@ impl ToLean for Proposition {
             }
             Proposition::Iff(p, q) => {
                 format!("({} ↔ {})", p.to_lean(), q.to_lean())
+            }
+            Proposition::Existential(param, body) => {
+                format!(
+                    "(∃ {} : {}, {})",
+                    param.name,
+                    param.typ.to_lean(),
+                    body.to_lean()
+                )
             }
         }
     }
@@ -359,6 +524,9 @@ impl fmt::Display for Expression {
             }
             Expression::Not(expr) => {
                 write!(f, "(not {})", expr)
+            }
+            Expression::FieldAccess(accessor, expr) => {
+                write!(f, "({} {})", accessor, expr)
             }
         }
     }
@@ -401,6 +569,9 @@ impl ToLean for Expression {
             Expression::Not(expr) => {
                 format!("(not {})", expr.to_lean())
             }
+            Expression::FieldAccess(accessor, expr) => {
+                format!("({} {})", accessor, expr.to_lean())
+            }
         }
     }
 }
@@ -437,14 +608,14 @@ mod tests {
         use super::*;
 
         // TODO: Why not automatically generate more of this?
-        pub const PRELUDE: &str = "type [@grind] ilist = Nil | Cons of int * ilist
-let [@simp] [@grind] is_nil (l : ilist) : bool = match l with | Nil -> true | Cons (_, _) -> false
-let [@simp] [@grind] hd (l : ilist) (x : int) : bool = match l with | Nil -> false | Cons (h, _) -> h = x
-let [@simp] [@grind] tl (l : ilist) (xs : ilist) : bool = match l with | Nil -> false | Cons (_, t) -> t = xs
-let [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons (_, xs) -> len xs (n - 1)
-let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons (h, t) -> match t with | Nil -> true | Cons (h2, t2) -> (h <= h2) && sorted (Cons (h2, t2))
-let [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons (h, t) -> (h = x) || mem x t
-let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons (h, t) -> (h = x) && all_eq t x";
+        pub const PRELUDE: &str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }
+let [@simp] [@grind] is_nil (l : ilist) : bool = match l with | Nil -> true | Cons { head = _; tail = _ } -> false
+let [@simp] [@grind] hd (l : ilist) (x : int) : bool = match l with | Nil -> false | Cons { head = h; tail = _ } -> h = x
+let [@simp] [@grind] tl (l : ilist) (xs : ilist) : bool = match l with | Nil -> false | Cons { head = _; tail = t } -> t = xs
+let [@simp] [@grind] rec len (l : ilist) (n : int) : bool = match l with | Nil -> n = 0 | Cons { head = _; tail = xs } -> len xs (n - 1)
+let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons { head = h; tail = t } -> match t with | Nil -> true | Cons { head = h2; tail = t2 } -> (h <= h2) && sorted t
+let [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons { head = h; tail = t } -> (h = x) || mem x t
+let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons { head = h; tail = t } -> (h = x) && all_eq t x";
 
         pub fn parse_all() -> Result<Vec<prog_ir::AstNode>, Box<dyn std::error::Error>> {
             OcamlParser::parse_nodes(PRELUDE)

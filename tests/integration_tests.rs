@@ -12,11 +12,6 @@ fn test_list_sorted() {
     process_example_file("examples/list_sorted.ml").expect("list_sorted example failed");
 }
 
-#[test]
-fn test_list_sorted_combined() {
-    process_example_file("examples/list_sorted_joined_match.ml")
-        .expect("list_sorted example failed");
-}
 
 #[test]
 fn test_bst() {
@@ -36,4 +31,15 @@ fn test_tree_height() {
 #[test]
 fn test_tree_complete() {
     process_example_file("examples/tree_complete.ml").expect("tree_complete example failed");
+}
+
+#[test]
+fn test_list_mem() {
+    process_example_file("examples/list_mem.ml").expect("list_mem example failed");
+}
+
+#[test]
+fn test_list_length_axiom_format() {
+    process_example_file("../integration_tests/list_length/program.ml")
+        .expect("list_length axiom format example failed");
 }

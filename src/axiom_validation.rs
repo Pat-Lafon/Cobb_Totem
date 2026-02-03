@@ -11,6 +11,31 @@ fn collect_all_variables(prop: &Proposition) -> VarSet {
     vars
 }
 
+fn collect_existentially_bound_variables(prop: &Proposition) -> VarSet {
+    let mut vars = VarSet::new();
+    collect_existential_vars(prop, &mut vars);
+    vars
+}
+
+fn collect_existential_vars(prop: &Proposition, vars: &mut VarSet) {
+    match prop {
+        Proposition::Existential(param, body) => {
+            vars.insert(param.name.clone());
+            collect_existential_vars(body, vars);
+        }
+        Proposition::Implication(p, q)
+        | Proposition::And(p, q)
+        | Proposition::Or(p, q)
+        | Proposition::Iff(p, q)
+        | Proposition::Equality(p, q) => {
+            collect_existential_vars(p, vars);
+            collect_existential_vars(q, vars);
+        }
+        Proposition::Not(p) => collect_existential_vars(p, vars),
+        _ => {}
+    }
+}
+
 fn collect_variables_in_prop(prop: &Proposition, vars: &mut VarSet) {
     match prop {
         Proposition::Expr(expr) => collect_variables_in_expr(expr, vars),
@@ -28,6 +53,10 @@ fn collect_variables_in_prop(prop: &Proposition, vars: &mut VarSet) {
             collect_variables_in_prop(q, vars);
         }
         Proposition::Not(p) => collect_variables_in_prop(p, vars),
+        Proposition::Existential(param, body) => {
+            vars.insert(param.name.clone());
+            collect_variables_in_prop(body, vars);
+        }
     }
 }
 
@@ -41,7 +70,31 @@ fn collect_variables_in_expr(expr: &Expression, vars: &mut VarSet) {
             collect_variables_in_expr(right, vars);
         }
         Expression::UnaryOp(_, expr) => collect_variables_in_expr(expr, vars),
-        _ => {}
+        Expression::FieldAccess(_, expr) => {
+            // Field accessor only depends on the accessed expression
+            collect_variables_in_expr(expr, vars);
+        }
+        Expression::Constructor(_, args) => {
+            for arg in args {
+                collect_variables_in_expr(arg, vars);
+            }
+        }
+        Expression::Tuple(elements) => {
+            for elem in elements {
+                collect_variables_in_expr(elem, vars);
+            }
+        }
+        Expression::IfThenElse {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_variables_in_expr(condition, vars);
+            collect_variables_in_expr(then_branch, vars);
+            collect_variables_in_expr(else_branch, vars);
+        }
+        Expression::Not(expr) => collect_variables_in_expr(expr, vars),
+        Expression::Literal(_) => {}
     }
 }
 
@@ -68,12 +121,14 @@ impl Axiom {
         Ok(())
     }
 
-    /// Check that all variables in the body are declared as parameters
+    /// Check that all variables in the body are declared as parameters or existential quantifiers
     fn validate_no_free_variables(&self) -> Result<(), String> {
         let declared_vars: VarSet = self.params.iter().map(|p| p.name.clone()).collect();
+        let existential_vars = collect_existentially_bound_variables(&self.body);
+        let valid_vars = declared_vars.union(&existential_vars).cloned().collect();
 
         let all_vars = collect_all_variables(&self.body);
-        let free_vars: Vec<_> = all_vars.difference(&declared_vars).collect();
+        let free_vars: Vec<_> = all_vars.difference(&valid_vars).collect();
 
         if free_vars.is_empty() {
             return Ok(());

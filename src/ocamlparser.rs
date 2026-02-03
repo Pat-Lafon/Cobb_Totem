@@ -30,7 +30,7 @@ impl OcamlParser {
     }
 
     /// Parse OCaml source code and return all AstNodes
-    pub(crate) fn parse_nodes(source: &str) -> Result<Vec<AstNode>, Box<dyn std::error::Error>> {
+    pub fn parse_nodes(source: &str) -> Result<Vec<AstNode>, Box<dyn std::error::Error>> {
         let (parser, tree) = Self::parse_source(source)?;
         parser.parse(&tree)
     }
@@ -263,8 +263,8 @@ impl OcamlParser {
         Ok(nodes)
     }
 
-    // Example: "type ilist = Nil | Cons of int * int list"
-    // Example with attribute: "type[@simp] ilist = Nil | Cons of int * int list"
+    // Example: "type ilist = Nil | Cons of { head : int; tail : int list }"
+    // Example with attribute: "type[@simp] ilist = Nil | Cons of { head : int; tail : int list }"
     fn parse_type_definition(&self, cursor: &mut tree_sitter::TreeCursor) -> TypeDecl {
         assert!(cursor.goto_first_child(), "Type definition has no children");
 
@@ -298,7 +298,7 @@ impl OcamlParser {
         result
     }
 
-    // Example: "ilist = Nil | Cons of int * int list"
+    // Example: "ilist = Nil | Cons of { head : int; tail : int list }"
     fn parse_type_binding(&self, cursor: &mut tree_sitter::TreeCursor) -> TypeDecl {
         assert!(cursor.goto_first_child(), "Type binding has no children");
 
@@ -368,7 +368,7 @@ impl OcamlParser {
         }
     }
 
-    // Example: "Nil" or "Cons of int * int list"
+    // Example: "Nil" or "Cons of { head : int; tail : int list }"
     fn parse_constructor_declaration(&self, cursor: &mut tree_sitter::TreeCursor) -> Variant {
         assert!(
             cursor.goto_first_child(),
@@ -401,49 +401,24 @@ impl OcamlParser {
         );
 
         // Has 'of' keyword, now process fields
-        let mut fields = Vec::new();
         assert!(
             cursor.goto_next_sibling(),
             "Expected at least one field in constructor"
         );
 
         let child = cursor.node();
-        match child.kind() {
+        let fields = match child.kind() {
             "record_declaration" => {
                 // Record-style fields: { name : type; ... }
-                fields = self.parse_record_declaration(child);
-            }
-            "type_constructor_path" | "constructed_type" => {
-                // Tuple-style fields: type * type * ...
-                let field_type = self.parse_type(child);
-                fields.push((fields.len().to_string(), field_type));
-
-                // Parse remaining fields with separators
-                while cursor.goto_next_sibling() {
-                    let child = cursor.node();
-                    match child.kind() {
-                        "*" => {
-                            assert!(cursor.goto_next_sibling(), "Expected field after separator");
-                            let field = cursor.node();
-                            assert!(
-                                field.kind() == "type_constructor_path"
-                                    || field.kind() == "constructed_type",
-                                "Expected field after separator, got '{}'",
-                                field.kind()
-                            );
-                            let field_type = self.parse_type(field);
-                            fields.push((fields.len().to_string(), field_type));
-                        }
-                        kind => {
-                            panic!("Expected separator, got '{}'", kind);
-                        }
-                    }
-                }
+                self.parse_record_declaration(child)
             }
             kind => {
-                panic!("Expected field or record_declaration, got '{}'", kind);
+                panic!(
+                    "Only record-style fields are supported. Expected 'record_declaration', got '{}'",
+                    kind
+                );
             }
-        }
+        };
 
         // Restore cursor to constructor_declaration
         Self::restore_cursor(cursor, "constructor_declaration");
@@ -643,8 +618,14 @@ impl OcamlParser {
             "infix_expression" => self.parse_infix_operation(node),
             "prefix_expression" => self.parse_prefix_expression(node),
             "application_expression" => self.parse_application_expression(node),
+            "record_expression" => self.parse_record_expression(node),
             "number" => Expression::Literal(self.parse_number_from_node(node)),
             "boolean" => Expression::Literal(self.parse_boolean_from_node(node)),
+            "{" => {
+                panic!(
+                    "Unexpected bare '{{' in expression. Record syntax should be part of a constructor application."
+                )
+            }
             kind => {
                 unimplemented!("Unhandled expression node kind: '{}'", kind)
             }
@@ -761,6 +742,12 @@ impl OcamlParser {
             "Application expression missing argument"
         );
 
+        // Check if next sibling is a record (opening brace)
+        if cursor.node().kind() == "{" {
+            // This is a record expression like Cons { head = x; tail = y }
+            return self.parse_record_fields_into_constructor(&func, &mut cursor);
+        }
+
         let mut args = Vec::new();
         let arg_node = cursor.node();
         let arg = self.parse_expression(arg_node);
@@ -826,6 +813,163 @@ impl OcamlParser {
         }
     }
 
+    /// Parse record fields and combine with a constructor
+    /// Called when we have Cons { head = x; tail = y }
+    fn parse_record_fields_into_constructor(
+        &self,
+        func: &Expression,
+        cursor: &mut tree_sitter::TreeCursor,
+    ) -> Expression {
+        let name = match func {
+            Expression::Constructor(n, _) => n.clone(),
+            _ => panic!(
+                "Record constructor must start with a constructor, got {:?}",
+                func
+            ),
+        };
+
+        // cursor is at the opening brace
+        assert_eq!(cursor.node().kind(), "{");
+
+        // Parse field values: field_name -> expression
+        // Preserve order by using a Vec instead of a HashMap
+        let mut field_values: Vec<(String, Expression)> = Vec::new();
+        assert!(cursor.goto_next_sibling(), "Record expression is empty");
+
+        loop {
+            let current = cursor.node();
+            match current.kind() {
+                "field" => {
+                    // Parse field: field_name = expression
+                    let mut field_cursor = current.walk();
+                    assert!(field_cursor.goto_first_child(), "field has no children");
+
+                    let field_path_node = field_cursor.node();
+                    let field_name = field_path_node
+                        .utf8_text(self.source.as_bytes())
+                        .expect("Failed to extract field name")
+                        .to_string();
+
+                    assert!(field_cursor.goto_next_sibling(), "field missing '='");
+                    assert_eq!(field_cursor.node().kind(), "=");
+
+                    assert!(field_cursor.goto_next_sibling(), "field missing expression");
+                    let expr_node = field_cursor.node();
+                    let expr = self.parse_expression(expr_node);
+                    field_values.push((field_name, expr));
+                }
+                "}" => {
+                    break;
+                }
+                ";" => {
+                    // Separator, move to next field
+                    assert!(cursor.goto_next_sibling(), "Expected field after semicolon");
+                    continue;
+                }
+                kind => {
+                    panic!("Unexpected node in record_expression: '{}'", kind);
+                }
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+
+        // Extract the expressions in order (they should be in source order)
+        let mut args = Vec::new();
+        for (_, expr) in field_values {
+            args.push(expr);
+        }
+
+        Expression::Constructor(name, args)
+    }
+
+    /// Parse a record expression like `Cons { head = x; tail = y }`
+    /// Returns Constructor with arguments in field order
+    fn parse_record_expression(&self, node: Node) -> Expression {
+        let mut cursor = node.walk();
+        assert!(
+            cursor.goto_first_child(),
+            "Record expression has no children"
+        );
+
+        let constructor_node = cursor.node();
+        // Constructor can be constructor_path or a value_path (for variables)
+        let constructor_expr = self.parse_expression(constructor_node);
+
+        let name = match constructor_expr {
+            Expression::Constructor(n, _) => n,
+            _ => panic!(
+                "Record expression must start with a constructor, got {:?}",
+                constructor_expr
+            ),
+        };
+
+        // Next should be the record fields
+        assert!(
+            cursor.goto_next_sibling(),
+            "Record expression missing opening brace"
+        );
+        let record_node = cursor.node();
+        assert_eq!(
+            record_node.kind(),
+            "{",
+            "Expected opening brace in record expression"
+        );
+
+        // Parse field values: field_name -> expression
+        // Preserve order by using a Vec instead of a HashMap
+        let mut field_values: Vec<(String, Expression)> = Vec::new();
+        assert!(cursor.goto_next_sibling(), "Record expression is empty");
+
+        loop {
+            let current = cursor.node();
+            match current.kind() {
+                "field" => {
+                    // Parse field: field_name = expression
+                    let mut field_cursor = current.walk();
+                    assert!(field_cursor.goto_first_child(), "field has no children");
+
+                    let field_path_node = field_cursor.node();
+                    let field_name = field_path_node
+                        .utf8_text(self.source.as_bytes())
+                        .expect("Failed to extract field name")
+                        .to_string();
+
+                    assert!(field_cursor.goto_next_sibling(), "field missing '='");
+                    assert_eq!(field_cursor.node().kind(), "=");
+
+                    assert!(field_cursor.goto_next_sibling(), "field missing expression");
+                    let expr_node = field_cursor.node();
+                    let expr = self.parse_expression(expr_node);
+                    field_values.push((field_name, expr));
+                }
+                "}" => {
+                    break;
+                }
+                ";" => {
+                    // Separator, move to next field
+                    assert!(cursor.goto_next_sibling(), "Expected field after semicolon");
+                    continue;
+                }
+                kind => {
+                    panic!("Unexpected node in record_expression: '{}'", kind);
+                }
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+
+        // Extract the expressions in order (they should be in source order)
+        let mut args = Vec::new();
+        for (_, expr) in field_values {
+            args.push(expr);
+        }
+
+        Expression::Constructor(name, args)
+    }
+
     fn parse_pattern(&self, node: Node) -> Pattern {
         match node.kind() {
             "constructor_path" => {
@@ -854,11 +998,16 @@ impl OcamlParser {
                     .parse::<ConstructorName>()
                     .unwrap_or_else(|e| panic!("{}", e));
 
-                // Move to next sibling to find parenthesized_pattern
-                let subpatterns = if cursor.goto_next_sibling()
-                    && cursor.node().kind() == "parenthesized_pattern"
-                {
-                    self.parse_parenthesized_pattern(cursor.node())
+                // Move to next sibling to find parenthesized_pattern or record_pattern
+                let subpatterns = if cursor.goto_next_sibling() {
+                    let next_kind = cursor.node().kind();
+                    if next_kind == "parenthesized_pattern" {
+                        self.parse_parenthesized_pattern(cursor.node())
+                    } else if next_kind == "record_pattern" {
+                        self.parse_record_pattern(cursor.node())
+                    } else {
+                        Vec::new()
+                    }
                 } else {
                     Vec::new()
                 };
@@ -940,6 +1089,75 @@ impl OcamlParser {
 
         Self::restore_cursor(&mut cursor, "parenthesized_pattern");
         patterns
+    }
+
+    /// Parse a record pattern like `{ head = h; tail = t }`
+    /// Returns patterns in field order based on the record structure
+    fn parse_record_pattern(&self, node: Node) -> Vec<Pattern> {
+        let mut cursor = node.walk();
+        let mut field_patterns = Vec::new();
+
+        assert!(cursor.goto_first_child(), "Record pattern has no children");
+
+        // Skip opening brace
+        assert_eq!(cursor.node().kind(), "{");
+        assert!(cursor.goto_next_sibling(), "Record pattern is empty");
+
+        loop {
+            let current = cursor.node();
+            match current.kind() {
+                "field_pattern" => {
+                    // Parse field_pattern: field_path = pattern
+                    let mut field_cursor = current.walk();
+                    assert!(
+                        field_cursor.goto_first_child(),
+                        "field_pattern has no children"
+                    );
+
+                    let field_path_node = field_cursor.node();
+                    // field_path can be either "field_name" or a qualified path
+                    assert!(
+                        field_path_node.kind() == "field_name"
+                            || field_path_node.kind() == "field_path",
+                        "Expected field_name or field_path, got '{}'",
+                        field_path_node.kind()
+                    );
+                    let _field_name = field_path_node
+                        .utf8_text(self.source.as_bytes())
+                        .expect("Failed to extract field name");
+
+                    assert!(
+                        field_cursor.goto_next_sibling(),
+                        "field_pattern missing '='"
+                    );
+                    assert_eq!(field_cursor.node().kind(), "=");
+
+                    assert!(
+                        field_cursor.goto_next_sibling(),
+                        "field_pattern missing pattern"
+                    );
+                    let pattern_node = field_cursor.node();
+                    let pattern = self.parse_pattern(pattern_node);
+                    field_patterns.push(pattern);
+                }
+                "}" => {
+                    break;
+                }
+                ";" => {
+                    // Separator, move to next field
+                    assert!(cursor.goto_next_sibling(), "Expected field after semicolon");
+                    continue;
+                }
+                kind => {
+                    panic!("Unexpected node in record_pattern: '{}'", kind);
+                }
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+
+        field_patterns
     }
 
     fn parse_tuple_pattern(&self, node: Node) -> Vec<Pattern> {
@@ -1222,7 +1440,7 @@ mod tests {
 
     #[test]
     fn test_parse_simple_type_definition() {
-        let source = "type ilist = Nil | Cons of int * int list";
+        let source = "type ilist = Nil | Cons of { head : int; tail : int list }";
         let (parser, tree) = OcamlParser::parse_source(source).unwrap();
 
         let expected = vec![AstNode::TypeDeclaration(TypeDecl {
@@ -1235,8 +1453,8 @@ mod tests {
                 Variant {
                     name: "Cons".to_string(),
                     fields: vec![
-                        ("0".to_string(), Type::Int),
-                        ("1".to_string(), Type::Named("int list".to_string())),
+                        ("head".to_string(), Type::Int),
+                        ("tail".to_string(), Type::Named("int list".to_string())),
                     ],
                 },
             ],
@@ -1248,7 +1466,7 @@ mod tests {
 
     #[test]
     fn test_parse_type_definition_with_attribute() {
-        let source = "type[@simp] ilist = Nil | Cons of int * int list";
+        let source = "type[@simp] ilist = Nil | Cons of { head : int; tail : int list }";
         let (parser, tree) = OcamlParser::parse_source(source).unwrap();
 
         let expected = vec![AstNode::TypeDeclaration(TypeDecl {
@@ -1261,8 +1479,8 @@ mod tests {
                 Variant {
                     name: "Cons".to_string(),
                     fields: vec![
-                        ("0".to_string(), Type::Int),
-                        ("1".to_string(), Type::Named("int list".to_string())),
+                        ("head".to_string(), Type::Int),
+                        ("tail".to_string(), Type::Named("int list".to_string())),
                     ],
                 },
             ],
@@ -1274,7 +1492,7 @@ mod tests {
 
     #[test]
     fn test_parse_type_definition_with_multiple_attributes() {
-        let source = "type[@simp][@reflect] ilist = Nil | Cons of int * int list";
+        let source = "type[@simp][@reflect] ilist = Nil | Cons of { head : int; tail : int list }";
         let (parser, tree) = OcamlParser::parse_source(source).unwrap();
 
         let expected = vec![AstNode::TypeDeclaration(TypeDecl {
@@ -1287,8 +1505,8 @@ mod tests {
                 Variant {
                     name: "Cons".to_string(),
                     fields: vec![
-                        ("0".to_string(), Type::Int),
-                        ("1".to_string(), Type::Named("int list".to_string())),
+                        ("head".to_string(), Type::Int),
+                        ("tail".to_string(), Type::Named("int list".to_string())),
                     ],
                 },
             ],
@@ -1300,7 +1518,7 @@ mod tests {
 
     #[test]
     fn test_parse_type_constructor_with_multiple_fields() {
-        let source = "type triple = Triple of int * ilist * bool";
+        let source = "type triple = Triple of { a : int; b : ilist; c : bool }";
         let (parser, tree) = OcamlParser::parse_source(source).unwrap();
 
         let expected = vec![AstNode::TypeDeclaration(TypeDecl {
@@ -1308,9 +1526,9 @@ mod tests {
             variants: vec![Variant {
                 name: "Triple".to_string(),
                 fields: vec![
-                    ("0".to_string(), Type::Int),
-                    ("1".to_string(), Type::Named("ilist".to_string())),
-                    ("2".to_string(), Type::Bool),
+                    ("a".to_string(), Type::Int),
+                    ("b".to_string(), Type::Named("ilist".to_string())),
+                    ("c".to_string(), Type::Bool),
                 ],
             }],
             attributes: vec![],
@@ -1342,7 +1560,7 @@ mod tests {
 
     #[test]
     fn test_parse_mixed_constructors_record_and_tuple() {
-        let source = "type expr = Const of int | BinOp of { left : expr; op : string; right : expr } | FuncCall of { name : string; args : expr list }";
+        let source = "type expr = Const of { value : int } | BinOp of { left : expr; op : string; right : expr } | FuncCall of { name : string; args : expr list }";
         let (parser, tree) = OcamlParser::parse_source(source).unwrap();
 
         let expected = vec![AstNode::TypeDeclaration(TypeDecl {
@@ -1350,7 +1568,7 @@ mod tests {
             variants: vec![
                 Variant {
                     name: "Const".to_string(),
-                    fields: vec![("0".to_string(), Type::Int)],
+                    fields: vec![("value".to_string(), Type::Int)],
                 },
                 Variant {
                     name: "BinOp".to_string(),
@@ -1511,12 +1729,12 @@ mod tests {
 
     #[test]
     fn test_parse_complete_list_len_example() {
-        let source = "type ilist = Nil | Cons of int * int list
+        let source = "type ilist = Nil | Cons of { head : int; tail : int list }
 
     let[@reflect] rec len (l : ilist) (n : int) : bool =
     match l with
     | Nil -> n = 0
-    | Cons (_, rest) -> len rest (n - 1)";
+    | Cons { head = _; tail = rest } -> len rest (n - 1)";
 
         let expected = vec![
             AstNode::TypeDeclaration(TypeDecl {
@@ -1529,8 +1747,8 @@ mod tests {
                     Variant {
                         name: "Cons".to_string(),
                         fields: vec![
-                            ("0".to_string(), Type::Int),
-                            ("1".to_string(), Type::Named("int list".to_string())),
+                            ("head".to_string(), Type::Int),
+                            ("tail".to_string(), Type::Named("int list".to_string())),
                         ],
                     },
                 ],
@@ -1905,8 +2123,8 @@ mod tests {
 
     #[test]
     fn test_parse_type_with_attributes_and_value_definition_with_attributes() {
-        let source = "type[@simp] ilist = Nil | Cons of int * int list
-let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest) -> 1 + len rest";
+        let source = "type[@simp] ilist = Nil | Cons of { head : int; tail : int list }
+let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = _; tail = rest } -> 1 + len rest";
 
         let expected = vec![
             AstNode::TypeDeclaration(TypeDecl {
@@ -1919,8 +2137,8 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest)
                     Variant {
                         name: "Cons".to_string(),
                         fields: vec![
-                            ("0".to_string(), Type::Int),
-                            ("1".to_string(), Type::Named("int list".to_string())),
+                            ("head".to_string(), Type::Int),
+                            ("tail".to_string(), Type::Named("int list".to_string())),
                         ],
                     },
                 ],
@@ -1968,7 +2186,7 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons (_, rest)
     fn test_parse_ite_as_variable_application() {
         // Test ite parsed as variable being applied (from tree example)
         assert_parse(
-            "let[@simp] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)",
+            "let[@simp] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> 1 + ite (height l > height r) (height l) (height r)",
             vec![let_binding_rec(
                 "height",
                 vec!["simp"],

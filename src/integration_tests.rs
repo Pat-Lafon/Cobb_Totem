@@ -51,7 +51,9 @@ mod integration_tests {
         let mut context_builder = LeanContextBuilder::new();
         for type_decl in type_decls {
             let theorems = type_decl.generate_complete_lawful_beq();
-            context_builder = context_builder.with_type_theorems(&type_decl.name, theorems);
+            context_builder = context_builder
+                .with_type_theorems(&type_decl.name, theorems)
+                .with_helper_predicates(&type_decl.name);
         }
 
         let lean_code = context_builder
@@ -67,105 +69,110 @@ mod integration_tests {
 
     #[test]
     fn test_sorted_list_program() {
-        let program_str = "type [@grind] ilist = Nil | Cons of int * ilist
+        let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }
 
 let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with
 | Nil -> true
-| Cons (x, xs) -> match xs with
+| Cons { head = x; tail = xs } -> match xs with
 | Nil -> true
-| Cons (y, ys) -> (x <= y) && sorted xs";
+| Cons { head = y; tail = ys } -> (x <= y) && sorted xs";
 
         validate_program(program_str, &["sorted"]);
     }
 
     #[test]
     fn test_list_length_program() {
-        let program_str = "type [@grind] ilist = Nil | Cons of int * ilist
+        let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }
 
 let [@simp] [@grind] rec len (l : ilist) : int =
 match l with
 | Nil -> 0
-| Cons (x, xs) -> 1 + len xs";
+| Cons { head = x; tail = xs } -> 1 + len xs";
 
         validate_program(program_str, &["len"]);
     }
 
     #[test]
     fn test_tree_height_program() {
-        let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
+        let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }
 
-let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)";
+let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> ite (height l > height r) (1 + height l) (1 + height r)";
 
         validate_program(program_str, &["height"]);
     }
 
     #[test]
     fn test_tree_height_and_complete_program() {
-        let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
+        let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }
 
-let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node (v, l, r) -> 1 + ite (height l > height r) (height l) (height r)
+let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> ite (height l > height r) (1 + height l) (1 + height r)
 
 let [@simp] [@grind] rec complete (t : tree) : bool =
 match t with
 | Leaf -> true
-| Node (x, l, r) -> complete l && complete r && height l = height r";
+| Node { value = x; left = l; right = r } -> complete l && complete r && height l = height r";
 
         validate_program(program_str, &["height", "complete"]);
     }
 
     #[test]
     fn test_bst_tree_program() {
-        let program_str = "type [@grind] tree = Leaf | Node of int * tree * tree
+        let program_str =
+            "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }
 
 let [@simp] [@grind] rec lower_bound (t : tree) (x : int) : bool =
 match t with
 | Leaf -> true
-| Node (y, l, r) -> x <= y && lower_bound l x && lower_bound r x
+| Node { value = y; left = l; right = r } -> x <= y && lower_bound l x && lower_bound r x
 
 let [@simp] [@grind] rec upper_bound (t : tree) (x : int) : bool =
 match t with
 | Leaf -> true
-| Node (y, l, r) -> y <= x && upper_bound l x && upper_bound r x
+| Node { value = y; left = l; right = r } -> y <= x && upper_bound l x && upper_bound r x
 
 let [@simp] [@grind] rec bst (t : tree) : bool =
 match t with
 | Leaf -> true
-| Node (x, l, r) -> bst l && bst r && upper_bound l x && lower_bound r x";
+| Node { value = x; left = l; right = r } -> bst l && bst r && upper_bound l x && lower_bound r x";
 
         validate_program(program_str, &["lower_bound", "upper_bound", "bst"]);
     }
 
     #[test]
     fn test_rbtree_invariants_program() {
-        let program_str = "type [@grind] rbtree = Rbtleaf | Rbtnode of bool * rbtree * int * rbtree
+        let program_str = "type [@grind] rbtree = Rbtleaf | Rbtnode of { color : bool; left : rbtree; value : int; right : rbtree }
 
 let [@simp] [@grind] rec num_black (t : rbtree) (h : int) : bool =
   match t with
   | Rbtleaf -> h = 0
-  | Rbtnode (c, l, v, r) ->
+  | Rbtnode { color = c; left = l; value = _; right = r } ->
       if c then num_black l (h - 1) && num_black r (h - 1)
       else num_black l h && num_black r h
 
 let [@simp] [@grind] rec no_red_red (t : rbtree) : bool =
   match t with
   | Rbtleaf -> true
-  | Rbtnode (c, l, v, r) ->
+  | Rbtnode { color = c; left = l; value = _; right = r } ->
       if not c then no_red_red l && no_red_red r
       else
-        match (l, r) with
-        | Rbtnode (c', l1, v1, r1), Rbtnode (c'', l2, v2, r2) ->
-            (not c') && (not c'') && no_red_red l && no_red_red r
-        | Rbtnode (c', l1, v1, r1), Rbtleaf -> (not c') && no_red_red l
-        | Rbtleaf, Rbtnode (c'', l2, v2, r2) -> (not c'') && no_red_red r
-        | Rbtleaf, Rbtleaf -> true
-
+        match l with
+        | Rbtnode { color = c'; left = _; value = _; right = _ } ->
+            (match r with
+            | Rbtnode { color = c''; left = _; value = _; right = _} ->
+                (not c') && (not c'') && no_red_red l && no_red_red r
+            | Rbtleaf -> (not c') && no_red_red l)
+        | Rbtleaf ->
+            (match r with
+            | Rbtnode { color = c''; left = _; value = _; right = _ } -> (not c'') && no_red_red r
+            | Rbtleaf -> true
+)
 let [@simp] [@grind] rec rb_root_color (t : rbtree) (c : bool) : bool =
-  match t with Rbtleaf -> false | Rbtnode (c', l, v, r) -> c = c'
+  match t with Rbtleaf -> false | Rbtnode { color = c'; left = _; value = _; right = _ } -> c = c'
 
 let [@simp] [@grind] rec rbtree_invariant (t : rbtree) (h : int) : bool =
   match t with
   | Rbtleaf -> h = 0
-  | Rbtnode (c, l, v, r) ->
+  | Rbtnode { color = c; left = l; value = _; right = r } ->
       if not c then rbtree_invariant l (h - 1) && rbtree_invariant r (h - 1)
       else
         ((not (rb_root_color l true)) && not (rb_root_color r true))
@@ -174,7 +181,7 @@ let [@simp] [@grind] rec rbtree_invariant (t : rbtree) (h : int) : bool =
 let [@simp] [@grind] rec rbdepth (t : rbtree) : int =
   match t with
   | Rbtleaf -> 0
-  | Rbtnode (c, l, v, r) -> 1 + ite (rbdepth l > rbdepth r) (rbdepth l) (rbdepth r)";
+  | Rbtnode { color = _; left = l; value = _; right = r } -> ite (rbdepth l > rbdepth r) (1 + rbdepth l) (1 + rbdepth r)";
 
         validate_program(
             program_str,

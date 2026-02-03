@@ -3,7 +3,7 @@ use std::str::FromStr;
 
 use crate::{Literal, ToLean, VarName};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ConstructorName {
     Simple(String),
     Qualified { module: String, name: String },
@@ -181,6 +181,130 @@ impl TypeDecl {
         (0..count).map(|i| format!("{}{}", prefix, i)).collect()
     }
 
+    /// Generate Lean helper predicates and field accessors for this datatype.
+    ///
+    /// For each constructor, generates:
+    /// - `is_{constructor}` predicate that checks the constructor
+    /// - Field accessor functions using actual field names
+    pub fn generate_helper_predicates(&self) -> String {
+        let mut helpers = Vec::new();
+
+        // Generate discriminator predicates (is_nil, is_cons, etc.)
+        for variant in &self.variants {
+            let predicate_name = format!("is_{}", variant.name.to_lowercase());
+            let param_name = "x";
+
+            // Helper to format a pattern with wildcards for missing fields
+            let format_pattern = |name: &str, field_count: usize, result: &str| {
+                let wildcards = (0..field_count).map(|_| "_").collect::<Vec<_>>().join(" ");
+                if wildcards.is_empty() {
+                    format!("  | .{} => {}", name, result)
+                } else {
+                    format!("  | .{} {} => {}", name, wildcards, result)
+                }
+            };
+
+            // Match case for this variant (returns true)
+            let match_case = format_pattern(&variant.name, variant.fields.len(), "true");
+
+            // False cases for all other variants
+            let other_cases = self
+                .variants
+                .iter()
+                .filter(|v| v.name != variant.name)
+                .map(|v| format_pattern(&v.name, v.fields.len(), "false"))
+                .collect::<Vec<_>>();
+
+            let mut match_expr = format!(
+                "@[simp, grind]\ndef {} ({} : {}) : Bool :=\n  match {} with\n{}",
+                predicate_name, param_name, self.name, param_name, match_case
+            );
+            for case in other_cases {
+                match_expr.push('\n');
+                match_expr.push_str(&case);
+            }
+            helpers.push(match_expr);
+        }
+
+        // Generate field accessors using actual field names
+        // Collect all unique field names and their types in one pass
+        let mut field_map: std::collections::BTreeMap<String, Type> =
+            std::collections::BTreeMap::new();
+        for variant in &self.variants {
+            for (name, ty) in &variant.fields {
+                field_map
+                    .entry(name.clone())
+                    .and_modify(|existing| {
+                        assert_eq!(
+                            existing, ty,
+                            "Field '{}' has different types in variants: {:?} vs {:?}",
+                            name, existing, ty
+                        );
+                    })
+                    .or_insert_with(|| ty.clone());
+            }
+        }
+
+        for (field_name, field_type) in field_map {
+            let field_return_type = field_type.to_lean();
+            // Wrap in Option for safe access
+            let option_return_type = format!("Option {}", field_return_type);
+            let param_name = "x";
+
+            // Generate match cases for each variant
+            let match_cases: Vec<String> = self
+                .variants
+                .iter()
+                .map(|variant| {
+                    if let Some(field_index) = variant
+                        .fields
+                        .iter()
+                        .position(|(name, _)| name == &field_name)
+                    {
+                        // This variant has the field
+                        let param_names: Vec<String> = (0..variant.fields.len())
+                            .map(|i| {
+                                if i == field_index {
+                                    format!("f{}", i)
+                                } else {
+                                    "_".to_string()
+                                }
+                            })
+                            .collect();
+                        let field_param = &param_names[field_index];
+                        let params = param_names.join(" ");
+                        format!("  | .{} {} => some {}", variant.name, params, field_param)
+                    } else {
+                        // This variant doesn't have the field - return none
+                        let wildcards = (0..variant.fields.len())
+                            .map(|_| "_")
+                            .collect::<Vec<_>>()
+                            .join(" ");
+                        if variant.fields.is_empty() {
+                            format!("  | .{} => none", variant.name)
+                        } else {
+                            format!("  | .{} {} => none", variant.name, wildcards)
+                        }
+                    }
+                })
+                .collect();
+
+            let match_expr = format!(
+                "@[simp, grind]\ndef {} ({} : {}) : {} :=\n  match {} with\n{}",
+                field_name,
+                param_name,
+                self.name,
+                option_return_type,
+                param_name,
+                match_cases.join("\n")
+            );
+
+            helpers.push(match_expr);
+        }
+
+        helpers.join("\n\n")
+    }
+
     /// Generate LawfulBEq helper theorems for beq behavior on constructor combinations
     fn generate_beq_theorems(&self) -> String {
         let mut theorems = Vec::new();
@@ -198,7 +322,7 @@ impl TypeDecl {
                             variant2.name.to_lowercase()
                         );
                         let theorem = format!(
-                            "@[simp, grind =] theorem {} : ({}.{} == {}.{}) = true := by\n  simp",
+                            "@[simp, grind =] theorem {} : ({}.{} == {}.{}) = true := by\n  rfl",
                             theorem_name, self.name, variant1.name, self.name, variant2.name
                         );
                         theorems.push(theorem);
@@ -257,7 +381,7 @@ impl TypeDecl {
                         format!(" {}", vars.join(" "))
                     };
                     let theorem = format!(
-                        "@[simp, grind =] theorem {} : ({}.{}{} == {}.{}{}) = false := by\n  simp",
+                        "@[simp, grind =] theorem {} : ({}.{}{} == {}.{}{}) = false := by\n  rfl",
                         theorem_name,
                         self.name,
                         variant1.name,
@@ -388,7 +512,7 @@ impl ToLean for Variant {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BinaryOp {
     Add,
     Sub,
@@ -404,7 +528,7 @@ pub enum BinaryOp {
     Or,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum UnaryOp {
     Neg,
     Not,
@@ -679,6 +803,55 @@ impl fmt::Display for Expression {
     }
 }
 
+impl Expression {
+    /// Check if any node in this expression tree matches the given predicate
+    fn matches_any<F>(&self, predicate: &F) -> bool
+    where
+        F: Fn(&Expression) -> bool,
+    {
+        if predicate(self) {
+            return true;
+        }
+
+        match self {
+            Expression::UnaryOp(_, e) => e.matches_any(predicate),
+            Expression::BinaryOp(left, _, right) => {
+                left.matches_any(predicate) || right.matches_any(predicate)
+            }
+            Expression::Application(func, args) => {
+                func.matches_any(predicate) || args.iter().any(|arg| arg.matches_any(predicate))
+            }
+            Expression::Constructor(_, args) => args.iter().any(|arg| arg.matches_any(predicate)),
+            Expression::Match(scrutinee, cases) => {
+                scrutinee.matches_any(predicate)
+                    || cases.iter().any(|(_, expr)| expr.matches_any(predicate))
+            }
+            Expression::Tuple(elements) => elements.iter().any(|e| e.matches_any(predicate)),
+            Expression::IfThenElse {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                condition.matches_any(predicate)
+                    || then_branch.matches_any(predicate)
+                    || else_branch.matches_any(predicate)
+            }
+            Expression::Not(e) => e.matches_any(predicate),
+            Expression::Variable(_) | Expression::Literal(_) => false,
+        }
+    }
+
+    /// Check if this expression contains a zero literal
+    pub(crate) fn contains_literal_zero(&self) -> bool {
+        self.matches_any(&|e| matches!(e, Expression::Literal(crate::Literal::Int(0))))
+    }
+
+    /// Check if this expression contains an addition operation
+    pub(crate) fn contains_addition(&self) -> bool {
+        self.matches_any(&|e| matches!(e, Expression::BinaryOp(_, BinaryOp::Add, _)))
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct LetBinding {
     pub name: VarName,
@@ -905,10 +1078,10 @@ mod tests {
         assert_eq!(beq_attributes, expected_attributes);
 
         let theorems = bool_type.generate_beq_theorems();
-        let expected_theorems = "@[simp, grind =] theorem MyBool.beq_true_true : (MyBool.True == MyBool.True) = true := by\n  simp\n\
-                                @[simp, grind =] theorem MyBool.beq_true_false : (MyBool.True == MyBool.False) = false := by\n  simp\n\
-                                @[simp, grind =] theorem MyBool.beq_false_true : (MyBool.False == MyBool.True) = false := by\n  simp\n\
-                                @[simp, grind =] theorem MyBool.beq_false_false : (MyBool.False == MyBool.False) = true := by\n  simp";
+        let expected_theorems = "@[simp, grind =] theorem MyBool.beq_true_true : (MyBool.True == MyBool.True) = true := by\n  rfl\n\
+                                @[simp, grind =] theorem MyBool.beq_true_false : (MyBool.True == MyBool.False) = false := by\n  rfl\n\
+                                @[simp, grind =] theorem MyBool.beq_false_true : (MyBool.False == MyBool.True) = false := by\n  rfl\n\
+                                @[simp, grind =] theorem MyBool.beq_false_false : (MyBool.False == MyBool.False) = true := by\n  rfl";
         assert_eq!(theorems, expected_theorems);
 
         let instance = bool_type.generate_lawful_beq_instance();
@@ -944,9 +1117,9 @@ mod tests {
         assert_eq!(beq_attributes, expected_attribtues);
 
         let beq_theorems = ilist_type.generate_beq_theorems();
-        let expected_beq = "@[simp, grind =] theorem ilist.beq_nil_nil : (ilist.Nil == ilist.Nil) = true := by\n  simp\n\
-                            @[simp, grind =] theorem ilist.beq_nil_cons : (ilist.Nil == ilist.Cons y0 y1) = false := by\n  simp\n\
-                            @[simp, grind =] theorem ilist.beq_cons_nil : (ilist.Cons x0 x1 == ilist.Nil) = false := by\n  simp\n\
+        let expected_beq = "@[simp, grind =] theorem ilist.beq_nil_nil : (ilist.Nil == ilist.Nil) = true := by\n  rfl\n\
+                            @[simp, grind =] theorem ilist.beq_nil_cons : (ilist.Nil == ilist.Cons y0 y1) = false := by\n  rfl\n\
+                            @[simp, grind =] theorem ilist.beq_cons_nil : (ilist.Cons x0 x1 == ilist.Nil) = false := by\n  rfl\n\
                             @[simp, grind =] theorem ilist.beq_cons_cons :\n  (ilist.Cons x0 x1 == ilist.Cons y0 y1) = (x0 == y0 && x1 == y1) := by\n  simp";
         assert_eq!(beq_theorems, expected_beq);
 
@@ -984,9 +1157,9 @@ mod tests {
         assert_eq!(beq_attributes, expected_attributes);
 
         let theorems = tree_type.generate_beq_theorems();
-        let expected_theorems = "@[simp, grind =] theorem tree.beq_leaf_leaf : (tree.Leaf == tree.Leaf) = true := by\n  simp\n\
-                                @[simp, grind =] theorem tree.beq_leaf_node : (tree.Leaf == tree.Node y0 y1 y2) = false := by\n  simp\n\
-                                @[simp, grind =] theorem tree.beq_node_leaf : (tree.Node x0 x1 x2 == tree.Leaf) = false := by\n  simp\n\
+        let expected_theorems = "@[simp, grind =] theorem tree.beq_leaf_leaf : (tree.Leaf == tree.Leaf) = true := by\n  rfl\n\
+                                @[simp, grind =] theorem tree.beq_leaf_node : (tree.Leaf == tree.Node y0 y1 y2) = false := by\n  rfl\n\
+                                @[simp, grind =] theorem tree.beq_node_leaf : (tree.Node x0 x1 x2 == tree.Leaf) = false := by\n  rfl\n\
                                 @[simp, grind =] theorem tree.beq_node_node :\n  (tree.Node x0 x1 x2 == tree.Node y0 y1 y2) = (x0 == y0 && x1 == y1 && x2 == y2) := by\n  simp";
         assert_eq!(theorems, expected_theorems);
 
@@ -995,5 +1168,32 @@ mod tests {
         assert_eq!(instance, expected_instance);
 
         assert_lawful_beq_valid(&tree_type, &beq_attributes, &theorems, &instance);
+    }
+
+    #[test]
+    fn test_generate_helper_predicates() {
+        let ilist_type = TypeDecl {
+            name: "ilist".to_string(),
+            variants: vec![
+                Variant {
+                    name: "Nil".to_string(),
+                    fields: vec![],
+                },
+                Variant {
+                    name: "Cons".to_string(),
+                    fields: vec![
+                        ("head".to_string(), Type::Int),
+                        ("tail".to_string(), Type::Named("ilist".to_string())),
+                    ],
+                },
+            ],
+            attributes: vec![],
+        };
+
+        let helpers = ilist_type.generate_helper_predicates();
+
+        let expected = "@[simp, grind]\ndef is_nil (x : ilist) : Bool :=\n  match x with\n  | .Nil => true\n  | .Cons _ _ => false\n\n@[simp, grind]\ndef is_cons (x : ilist) : Bool :=\n  match x with\n  | .Cons _ _ => true\n  | .Nil => false\n\n@[simp, grind]\ndef head (x : ilist) : Option Int :=\n  match x with\n  | .Nil => none\n  | .Cons f0 _ => some f0\n\n@[simp, grind]\ndef tail (x : ilist) : Option ilist :=\n  match x with\n  | .Nil => none\n  | .Cons _ f1 => some f1";
+
+        assert_eq!(helpers, expected);
     }
 }

@@ -1,11 +1,11 @@
-pub(crate) mod axiom_builder_state;
-pub(crate) mod axiom_generator;
+pub mod axiom_builder_state;
+pub mod axiom_generator;
 pub(crate) mod axiom_validation;
 pub(crate) mod create_wrapper;
 pub(crate) mod integration_tests;
 pub mod lean_backend;
 pub(crate) mod lean_validation;
-pub(crate) mod ocamlparser;
+pub mod ocamlparser;
 pub mod prog_ir;
 pub mod spec_ir;
 
@@ -15,7 +15,7 @@ use prog_ir::AstNode;
 use std::fmt;
 
 /// Literal values used in expressions
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Literal {
     Int(i32),
     Bool(bool),
@@ -154,6 +154,7 @@ pub fn generate_and_validate_axioms(
         .with_nodes(parsed_nodes.clone())
         .with_axioms(axioms.clone())
         .with_type_theorems(&type_decl.name, type_decl.generate_complete_lawful_beq())
+        .with_helper_predicates(&type_decl.name)
         .build();
 
     validate_lean_code(&lean_code)?;
@@ -260,10 +261,16 @@ pub(crate) mod test_helpers {
         let mut builder = LeanContextBuilder::new();
         for type_decl in extract_type_decls(&nodes) {
             let theorems = type_decl.generate_complete_lawful_beq();
-            builder = builder.with_type_theorems(&type_decl.name, theorems);
+            builder = builder
+                .with_type_theorems(&type_decl.name, theorems)
+                .with_helper_predicates(&type_decl.name);
         }
 
-        let lean_code = builder.with_nodes(nodes).with_axioms(axioms).build();
+        let lean_code = builder
+            .with_nodes(nodes)
+            .with_axioms(axioms)
+            .with_attributes(vec!["[simp] if_neg"])
+            .build();
 
         validate_lean_code(&lean_code).unwrap_or_else(|e| {
             eprintln!("Generated Lean code:\n{}", lean_code);

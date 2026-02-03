@@ -29,10 +29,12 @@ pub(crate) fn create_and_wrap_predicate(binding: &LetBinding) -> (LetBinding, Le
     impl_binding.name = impl_fn_name.clone();
     impl_binding.body = rename_function_calls_in(&impl_binding.body);
 
-    // Create wrapper: predicate definition
+    let mut wrapper_attributes = binding.attributes.clone();
+    wrapper_attributes.push("grind unfold".to_string());
+
     let wrapper = LetBinding {
         name: original_name.clone(),
-        attributes: binding.attributes.clone(),
+        attributes: wrapper_attributes,
         is_recursive: false,
         params: {
             let mut params = binding.params.clone();
@@ -141,7 +143,7 @@ mod tests {
             .with_nodes(vec![AstNode::LetBinding(wrapper_fn)])
             .build();
 
-        let expected_wrapper = r#"@[simp, grind]
+        let expected_wrapper = r#"@[simp, grind, grind unfold]
 def len (l : ilist) (res : Int) : Bool := (len_impl l == res)"#;
         assert_eq!(lean_wrapper.trim(), expected_wrapper);
 
@@ -150,9 +152,9 @@ def len (l : ilist) (res : Int) : Bool := (len_impl l == res)"#;
             .build();
 
         let expected_impl = r#"@[simp, grind]
-def len_impl (l : ilist) : Int := match l with
+def len_impl (l : ilist) : Int := (match l with
   | .Nil => 0
-  | (.Cons _ tl) => (1 + len_impl tl)"#;
+  | (.Cons _ tl) => (1 + len_impl tl))"#;
         assert_eq!(lean_impl.trim(), expected_impl);
     }
 }

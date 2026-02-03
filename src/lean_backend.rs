@@ -103,7 +103,7 @@ impl ToLean for Expression {
                     .collect::<Vec<_>>()
                     .join("\n");
 
-                format!("match {} with\n{}", scrutinee.to_lean(), cases_str)
+                format!("(match {} with\n{})", scrutinee.to_lean(), cases_str)
             }
             Expression::Tuple(elements) => {
                 if elements.len() == 1 {
@@ -155,6 +155,8 @@ pub struct LeanContextBuilder {
     nodes: Vec<AstNode>,
     axioms: Vec<crate::spec_ir::Axiom>,
     types_with_theorems: TypeTheorems,
+    types_needing_helpers: std::collections::HashSet<String>,
+    attributes: Vec<String>,
 }
 
 type TypeTheorems = std::collections::HashMap<String, String>;
@@ -181,6 +183,19 @@ impl LeanContextBuilder {
         self
     }
 
+    /// Generate helper predicates (`is_*`, field accessors) for a specific type
+    pub fn with_helper_predicates(mut self, type_name: &str) -> Self {
+        self.types_needing_helpers.insert(type_name.to_string());
+        self
+    }
+
+    pub fn with_attributes(mut self, attributes: Vec<&str>) -> Self {
+        for attr in attributes {
+            self.attributes.push(attr.to_string());
+        }
+        self
+    }
+
     /// Build the final Lean code
     pub fn build(self) -> String {
         // Check if any axiom uses the aesop tactic
@@ -194,6 +209,13 @@ impl LeanContextBuilder {
             output.push_str("import Aesop\n\n");
         }
 
+        // Add attribute directives
+        for attribute in &self.attributes {
+            output.push_str("attribute ");
+            output.push_str(attribute);
+            output.push_str("\n\n");
+        }
+
         for node in &self.nodes {
             match node {
                 AstNode::TypeDeclaration(type_decl) => {
@@ -201,6 +223,14 @@ impl LeanContextBuilder {
                     if let Some(theorems) = self.types_with_theorems.get(&type_decl.name) {
                         output.push_str("\n\n");
                         output.push_str(theorems);
+                    }
+                    // Generate helper predicates if explicitly requested
+                    if self.types_needing_helpers.contains(&type_decl.name) {
+                        let helper_predicates = type_decl.generate_helper_predicates();
+                        if !helper_predicates.is_empty() {
+                            output.push_str("\n\n");
+                            output.push_str(&helper_predicates);
+                        }
                     }
                 }
                 AstNode::LetBinding(binding) => {
@@ -317,7 +347,7 @@ mod tests {
         let lean_code = format!("{}\n\n{}", ilist_type.to_lean(), len_function.to_lean());
         assert_eq!(
             lean_code,
-            "@[grind]\ninductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr\n\ndef len (l : ilist) (n : Int) : Bool := match l with\n  | .Nil => (n == 0)\n  | (.Cons _ rest) => len rest (n - 1)"
+            "@[grind]\ninductive ilist where\n  | Nil\n  | Cons : Int → ilist → ilist\nderiving BEq, Repr\n\ndef len (l : ilist) (n : Int) : Bool := (match l with\n  | .Nil => (n == 0)\n  | (.Cons _ rest) => len rest (n - 1))"
         );
         validate_lean_code(&lean_code)
             .unwrap_or_else(|e| panic!("Generated Lean code failed validation: {}", e));
@@ -420,5 +450,37 @@ mod tests {
         // Verify the generated code validates
         validate_lean_code(&lean_code)
             .unwrap_or_else(|e| panic!("Multiple types code failed validation: {}", e));
+    }
+    #[test]
+    fn test_context_builder_with_multiple_attributes() {
+        let ilist_type = create_ilist_type();
+        let len_function = create_len_function();
+
+        let builder = LeanContextBuilder::new()
+            .with_nodes(vec![
+                AstNode::TypeDeclaration(ilist_type),
+                AstNode::LetBinding(len_function),
+            ])
+            .with_attributes(vec!["[simp] if_neg", "[simp] Bool.and_assoc"]);
+
+        let lean_code = builder.build();
+
+        // Verify both attributes are included in output
+        assert!(
+            lean_code.contains("attribute [simp] if_neg"),
+            "Generated code should contain if_neg attribute"
+        );
+        assert!(
+            lean_code.contains("attribute [simp] Bool.and_assoc"),
+            "Generated code should contain Bool.and_assoc attribute"
+        );
+
+        // Verify the generated code validates
+        validate_lean_code(&lean_code).unwrap_or_else(|e| {
+            panic!(
+                "Builder with multiple attributes generated code failed validation: {}",
+                e
+            )
+        });
     }
 }
