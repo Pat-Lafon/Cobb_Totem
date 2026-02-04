@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use crate::VarName;
 use crate::create_wrapper::RESULT_PARAM;
 use crate::prog_ir::{BinaryOp, LetBinding, TypeDecl};
-use crate::spec_ir::{Axiom, Expression, Parameter, Proposition, Quantifier, DOMAIN_AXIOM_SUFFIX};
+use crate::spec_ir::{Axiom, DOMAIN_AXIOM_SUFFIX, Expression, Parameter, Proposition, Quantifier};
 
 /// Type alias for proof tactic closure
 pub type ProofTacticFn = Box<dyn Fn(&Axiom) -> String>;
@@ -110,31 +110,38 @@ impl AxiomBuilderState {
 
     /// Extract all variable references from a proposition
     pub(crate) fn extract_variables_from_proposition(prop: &Proposition) -> HashSet<VarName> {
-        prop.fold(HashSet::new(), &|mut vars, p| {
-            match p {
-                Proposition::Expr(expr) => {
-                    vars = expr.fold(vars, &|mut vars, e| {
+        prop.fold(HashSet::new(), &|mut vars, p| match p {
+            Proposition::Expr(expr) => {
+                vars = expr.fold(vars, &|mut vars, e| {
+                    if let Expression::Variable(v) = e {
+                        vars.insert(v.clone());
+                    }
+                    vars
+                });
+                vars
+            }
+            Proposition::Predicate(_, args) => {
+                for arg in args {
+                    vars = arg.fold(vars, &|mut vars, e| {
                         if let Expression::Variable(v) = e {
                             vars.insert(v.clone());
                         }
                         vars
                     });
-                    vars
                 }
-                Proposition::Predicate(_, args) => {
-                    for arg in args {
-                        vars = arg.fold(vars, &|mut vars, e| {
-                            if let Expression::Variable(v) = e {
-                                vars.insert(v.clone());
-                            }
-                            vars
-                        });
-                    }
-                    vars
-                }
-                _ => vars,
+                vars
             }
+            _ => vars,
         })
+    }
+
+    /// Build an implication chain from all steps (standard format)
+    fn build_implication_chain(steps: &[Proposition]) -> Proposition {
+        let mut chain = steps.last().unwrap().clone();
+        for step in steps[..steps.len() - 1].iter().rev() {
+            chain = Proposition::Implication(Box::new(step.clone()), Box::new(chain));
+        }
+        chain
     }
 
     /// Add lazy existential quantifiers to an implication chain.
@@ -148,6 +155,69 @@ impl AxiomBuilderState {
             .map(|p| (p.name.clone(), p.clone()))
             .collect();
         Self::wrap_at_first_usage_pass(&chain, &mut params_by_name)
+    }
+
+    /// Strengthen implications to conjunctions when both sides reference the given parameter.
+    ///
+    /// Given an existential parameter in scope, decides whether an implication can be
+    /// strengthened to a conjunction based on whether both sides reference the parameter.
+    /// Returns the original proposition if it's not an implication or doesn't meet criteria.
+    fn strengthen_implication_in_scope(param_name: &VarName, prop: Proposition) -> Proposition {
+        match prop {
+            Proposition::Implication(left, right) => {
+                let left_vars = Self::extract_variables_from_proposition(&left);
+                let right_vars = Self::extract_variables_from_proposition(&right);
+
+                // If either side doesn't reference the existential, keep as implication
+                if !left_vars.contains(param_name) || !right_vars.contains(param_name) {
+                    return Proposition::Implication(left, right);
+                }
+
+                // Exception: don't strengthen if right side is an existential
+                if matches!(&*right, Proposition::Existential(_, _)) {
+                    return Proposition::Implication(left, right);
+                }
+
+                match *right {
+                    Proposition::Implication(right_left, right_right) => {
+                        let right_left_vars = Self::extract_variables_from_proposition(&right_left);
+                        if right_left_vars.contains(param_name) {
+                            // Combine: (A ∧ B) → C
+                            Proposition::Implication(
+                                Box::new(Proposition::And(left, right_left)),
+                                right_right,
+                            )
+                        } else {
+                            // Keep separate: A ∧ (B → C)
+                            Proposition::And(left, Box::new(Proposition::Implication(right_left, right_right)))
+                        }
+                    }
+                    other => {
+                        // Convert to conjunction: A ∧ B
+                        Proposition::And(left, Box::new(other))
+                    }
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Apply conjunction strengthening: converts implications to conjunctions
+    /// in existential bodies when both sides reference the same existential variable.
+    ///
+    /// This is a separate post-processing step that optimizes wrapped existentials
+    /// by strengthening implications to conjunctions where the structure better
+    /// represents the logical relationship.
+    fn apply_conjunction_strengthening(prop: Proposition) -> Proposition {
+        prop.map(&|p| {
+            match p {
+                Proposition::Existential(param, body) => {
+                    let new_body = Self::strengthen_implication_in_scope(&param.name, *body);
+                    Proposition::Existential(param, Box::new(new_body))
+                }
+                other => other,
+            }
+        })
     }
 
     /// Single pass through proposition, wrapping each variable at its first usage point.
@@ -166,7 +236,8 @@ impl AxiomBuilderState {
 
                 // Recurse into consequent with reduced parameter map
                 let wrapped_consequent = Self::wrap_at_first_usage_pass(consequent, params_by_name);
-                let mut result = Proposition::Implication(antecedent.clone(), Box::new(wrapped_consequent));
+                let mut result =
+                    Proposition::Implication(antecedent.clone(), Box::new(wrapped_consequent));
 
                 // Wrap variables in reverse order for proper nesting
                 for (_, param) in vars_to_wrap.iter_mut().rev() {
@@ -199,14 +270,14 @@ impl AxiomBuilderState {
             .cloned()
             .partition(|p| p.quantifier == Quantifier::Universal);
 
-        // Build implication chain from all steps
-        let mut steps_body = steps.last().unwrap().clone();
-        for step in steps[..steps.len() - 1].iter().rev() {
-            steps_body = Proposition::Implication(Box::new(step.clone()), Box::new(steps_body));
-        }
+        // Build implication chain
+        let mut steps_body = Self::build_implication_chain(steps);
 
         // Add existential quantifiers lazily to the chain
         steps_body = Self::add_lazy_existentials_to_chain(steps_body, &ext_params);
+
+        // Apply conjunction strengthening as a separate post-processing step
+        steps_body = Self::apply_conjunction_strengthening(steps_body);
 
         let predicate_args = self.build_predicate_args_for(binding);
 
@@ -251,7 +322,7 @@ impl AxiomBuilderState {
             .cloned()
             .partition(|p| p.quantifier == Quantifier::Existential);
 
-        // Build reverse implication chain: steps → predicate
+        // Build reverse chain: steps → predicate with implication
         let predicate_args = self.build_predicate_args_for(binding);
         let mut body = Proposition::Predicate(binding.name.0.clone(), predicate_args);
 
@@ -261,6 +332,9 @@ impl AxiomBuilderState {
 
         // Add existential quantifiers lazily to wrap at first usage
         body = Self::add_lazy_existentials_to_chain(body, &ext_params);
+
+        // Apply conjunction strengthening as a separate post-processing step
+        body = Self::apply_conjunction_strengthening(body);
 
         let params = self.build_and_partition_params_for(binding, &uni_params);
 
@@ -492,7 +566,7 @@ mod tests {
 
         let lean_output = sorted_2.to_lean();
 
-        let expected = "theorem sorted_2 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, ((sorted l res) → ((((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs)) → ((((is_cons xs) ∧ ((head xs) = y)) ∧ ((tail xs) = ys)) → (∃ res_0 : Bool, ((sorted xs res_0) → ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res)))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
+        let expected = "theorem sorted_2 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, ((sorted l res) → ((((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs)) → ((((is_cons xs) ∧ ((head xs) = y)) ∧ ((tail xs) = ys)) → (∃ res_0 : Bool, ((sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res)))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
         assert_eq!(
             lean_output, expected,
             "sorted_2 axiom has incorrect structure"
@@ -516,7 +590,7 @@ mod tests {
         let lean_output = sorted_2_rev.to_lean();
         assert_eq!(
             lean_output,
-            "theorem sorted_2_rev : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs)) → ((((is_cons xs) ∧ ((head xs) = y)) ∧ ((tail xs) = ys)) → (∃ res_0 : Bool, ((sorted xs res_0) → (((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res))) → (sorted l res)))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n"
+            "theorem sorted_2_rev : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs)) → ((((is_cons xs) ∧ ((head xs) = y)) ∧ ((tail xs) = ys)) → (∃ res_0 : Bool, (((sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res)))) → (sorted l res))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n"
         );
 
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -544,7 +618,7 @@ mod tests {
             .find(|a| a.name == "mem_1")
             .expect("mem_1 axiom should exist");
         let mem_1_lean = mem_1.to_lean();
-        let expected_mem_1 = "theorem mem_1 : ∀ x : Int, ∀ l : ilist, ∀ h : Int, ∀ t : ilist, ∀ res : Bool, ((mem x l res) → ((((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t)) → (∃ res_0 : Bool, ((mem x t res_0) → ((((h = x) ∨ res_0) ∧ res) ∨ (¬(((h = x) ∨ res_0)) ∧ ¬(res))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
+        let expected_mem_1 = "theorem mem_1 : ∀ x : Int, ∀ l : ilist, ∀ h : Int, ∀ t : ilist, ∀ res : Bool, ((mem x l res) → ((((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t)) → (∃ res_0 : Bool, ((mem x t res_0) ∧ ((((h = x) ∨ res_0) ∧ res) ∨ (¬(((h = x) ∨ res_0)) ∧ ¬(res))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
         assert_eq!(mem_1_lean, expected_mem_1);
 
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -574,7 +648,7 @@ mod tests {
             .expect("all_eq_1 axiom should exist");
         let all_eq_1_lean = all_eq_1.to_lean();
         // Boolean equalities are now converted to biconditionals: (A && B) || (!A && !B)
-        let expected_all_eq_1 = "theorem all_eq_1 : ∀ l : ilist, ∀ x : Int, ∀ h : Int, ∀ t : ilist, ∀ res : Bool, ((all_eq l x res) → ((((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t)) → (∃ res_0 : Bool, ((all_eq t x res_0) → ((((h = x) ∧ res_0) ∧ res) ∨ (¬(((h = x) ∧ res_0)) ∧ ¬(res))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
+        let expected_all_eq_1 = "theorem all_eq_1 : ∀ l : ilist, ∀ x : Int, ∀ h : Int, ∀ t : ilist, ∀ res : Bool, ((all_eq l x res) → ((((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t)) → (∃ res_0 : Bool, ((all_eq t x res_0) ∧ ((((h = x) ∧ res_0) ∧ res) ∨ (¬(((h = x) ∧ res_0)) ∧ ¬(res))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
         assert_eq!(all_eq_1_lean, expected_all_eq_1);
 
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -607,7 +681,7 @@ mod tests {
             .find(|a| a.name == "lower_bound_1")
             .expect("lower_bound_1 axiom should exist");
         let lb_1_lean = lb_1.to_lean();
-        let expected_lb_1 = "theorem lower_bound_1 : ∀ t : tree, ∀ x : Int, ∀ y : Int, ∀ l : tree, ∀ r : tree, ∀ res : Bool, ((lower_bound t x res) → (((((is_node t) ∧ ((value t) = y)) ∧ ((left t) = l)) ∧ ((right t) = r)) → (∃ res_0 : Bool, ((lower_bound l x res_0) → (∃ res_1 : Bool, ((lower_bound r x res_1) → ((((x ≤ y) ∧ (res_0 ∧ res_1)) ∧ res) ∨ (¬(((x ≤ y) ∧ (res_0 ∧ res_1))) ∧ ¬(res))))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
+        let expected_lb_1 = "theorem lower_bound_1 : ∀ t : tree, ∀ x : Int, ∀ y : Int, ∀ l : tree, ∀ r : tree, ∀ res : Bool, ((lower_bound t x res) → (((((is_node t) ∧ ((value t) = y)) ∧ ((left t) = l)) ∧ ((right t) = r)) → (∃ res_0 : Bool, ((lower_bound l x res_0) → (∃ res_1 : Bool, ((lower_bound r x res_1) ∧ ((((x ≤ y) ∧ (res_0 ∧ res_1)) ∧ res) ∨ (¬(((x ≤ y) ∧ (res_0 ∧ res_1))) ∧ ¬(res))))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
         assert_eq!(lb_1_lean, expected_lb_1);
 
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -652,7 +726,7 @@ mod tests {
 
         // Check the complete Lean representation
         let lean_output = len_1.to_lean();
-        let expected = "theorem len_1 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ res : Int, ((len l res) → ((((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs)) → (∃ res_0 : Int, ((len xs res_0) → ((1 + res_0) = res))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
+        let expected = "theorem len_1 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ res : Int, ((len l res) → ((((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs)) → (∃ res_0 : Int, ((len xs res_0) ∧ ((1 + res_0) = res))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
         assert_eq!(lean_output, expected, "len_1 axiom has incorrect structure");
 
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -670,7 +744,9 @@ mod tests {
             .expect("mem_1_rev axiom should exist");
 
         // Check the complete Lean representation
-        let expected = "theorem mem_1_rev : ∀ x : Int, ∀ l : ilist, ∀ h : Int, ∀ t : ilist, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t)) → (∃ res_0 : Bool, ((mem x t res_0) → (((((h = x) ∨ res_0) ∧ res) ∨ (¬(((h = x) ∨ res_0)) ∧ ¬(res))) → (mem x l res))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
+        // Note: Conjunction strengthening pulls conjunction into nested implications:
+        // (A ∧ (B → C)) becomes ((A ∧ B) → C) when both A and B reference the existential
+        let expected = "theorem mem_1_rev : ∀ x : Int, ∀ l : ilist, ∀ h : Int, ∀ t : ilist, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t)) → (∃ res_0 : Bool, (((mem x t res_0) ∧ ((((h = x) ∨ res_0) ∧ res) ∨ (¬(((h = x) ∨ res_0)) ∧ ¬(res)))) → (mem x l res)))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  simp_all\n  try grind\n  try aesop\n";
         assert_eq!(
             mem_1_rev.to_lean(),
             expected,
@@ -708,9 +784,7 @@ mod tests {
 
         let lean_output = height_1.to_lean();
 
-        // After cache refactoring: IfThenElse branches share condition's cache state
-        // So the second (height l) call in the branch reuses res_0 instead of creating res_2
-        let expected = "theorem height_1 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, ((height t res) → (((((is_node t) ∧ ((value t) = v)) ∧ ((left t) = l)) ∧ ((right t) = r)) → (∃ res_0 : Int, ((height l res_0) → (∃ res_1 : Int, ((height r res_1) → ((((res_0 > res_1) ∧ true) ∨ (¬((res_0 > res_1)) ∧ ¬(true))) → ((height l res_0) → ((1 + res_0) = res))))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  simp_all\n  try grind\n  try aesop";
+        let expected = "theorem height_1 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, ((height t res) → (((((is_node t) ∧ ((value t) = v)) ∧ ((left t) = l)) ∧ ((right t) = r)) → (∃ res_0 : Int, ((height l res_0) → (∃ res_1 : Int, (((height r res_1) ∧ (((res_0 > res_1) ∧ true) ∨ (¬((res_0 > res_1)) ∧ ¬(true)))) → ((height l res_0) → ((1 + res_0) = res)))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  simp_all\n  try grind\n  try aesop";
 
         assert_eq!(
             lean_output.trim(),
@@ -811,7 +885,7 @@ mod tests {
             .iter()
             .find(|a| a.name == "len_geq_0")
             .expect("len function should generate len_geq_0 axiom due to non-negativity patterns");
-        
+
         assert!(domain_axiom.is_domain_specific());
     }
 
@@ -838,7 +912,10 @@ mod tests {
 
         // all_eq returns bool, so no domain axiom should be generated
         let domain_axiom_count = axioms.iter().filter(|a| a.is_domain_specific()).count();
-        assert_eq!(domain_axiom_count, 0, "bool-returning function should not generate domain axioms");
+        assert_eq!(
+            domain_axiom_count, 0,
+            "bool-returning function should not generate domain axioms"
+        );
     }
 
     #[test]
@@ -864,6 +941,9 @@ mod tests {
 
         // const_zero has zero but no addition, so no domain axiom should be generated
         let domain_axiom_count = axioms.iter().filter(|a| a.is_domain_specific()).count();
-        assert_eq!(domain_axiom_count, 0, "function without both zero and addition should not generate domain axioms");
+        assert_eq!(
+            domain_axiom_count, 0,
+            "function without both zero and addition should not generate domain axioms"
+        );
     }
 }

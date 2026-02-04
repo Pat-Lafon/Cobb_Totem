@@ -293,9 +293,7 @@ impl AxiomGenerator {
                 // Nested constructor pattern: recursively process
                 Some(self.pattern_to_predicate_proposition(&field_access, pattern))
             }
-            crate::prog_ir::Pattern::Wildcard => {
-                None
-            }
+            crate::prog_ir::Pattern::Wildcard => None,
             crate::prog_ir::Pattern::Tuple(_) => {
                 panic!("Nested tuple patterns not yet supported")
             }
@@ -440,8 +438,9 @@ impl AxiomGenerator {
                 results
             }
             crate::prog_ir::Expression::Application(func_expr, arg_exprs) => {
-                let func_body_data = Self::extract_single_expr(self.analyze_expression(func_expr, cache))
-                    .unwrap_or_else(|e| panic!("Application function: {}", e));
+                let func_body_data =
+                    Self::extract_single_expr(self.analyze_expression(func_expr, cache))
+                        .unwrap_or_else(|e| panic!("Application function: {}", e));
 
                 let func_name = match func_body_data {
                     Expression::Variable(v) => v,
@@ -487,7 +486,7 @@ impl AxiomGenerator {
                         // First occurrence: create new existential and add parameter
                         let exists_var = self.next_var();
                         cache.insert(app_key, exists_var.clone());
-                        
+
                         let existential = Expression::Variable(exists_var.clone());
 
                         let mut proposition_steps = extraction.preceding_steps.concat();
@@ -941,10 +940,18 @@ mod tests {
 
         // Verify deduplication: within each branch, max_elem t is deduplicated
         let res_0_in_true = props_1.join(" ").matches("res_0").count();
-        assert_eq!(res_0_in_true, 2, "True branch: res_0 should appear 2 times (predicate + condition), got {}", res_0_in_true);
+        assert_eq!(
+            res_0_in_true, 2,
+            "True branch: res_0 should appear 2 times (predicate + condition), got {}",
+            res_0_in_true
+        );
 
         // False branch also shares res_0 from condition: appears in predicate, condition, result predicate, and result expr
         let res_0_in_false = props_2.join(" ").matches("res_0").count();
-        assert_eq!(res_0_in_false, 4, "False branch: res_0 should appear 4 times (predicate + condition + result predicate + result expr), got {}", res_0_in_false);
+        assert_eq!(
+            res_0_in_false, 4,
+            "False branch: res_0 should appear 4 times (predicate + condition + result predicate + result expr), got {}",
+            res_0_in_false
+        );
     }
 }
