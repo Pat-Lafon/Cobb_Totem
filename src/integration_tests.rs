@@ -76,7 +76,10 @@ mod integration_tests {
                 e.clone()
             };
 
-            panic!("Generated axioms failed Lean validation:\n{}", error_preview)
+            panic!(
+                "Generated axioms failed Lean validation:\n{}",
+                error_preview
+            )
         });
     }
 
