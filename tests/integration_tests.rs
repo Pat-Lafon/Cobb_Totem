@@ -12,7 +12,6 @@ fn test_list_sorted() {
     process_example_file("examples/list_sorted.ml").expect("list_sorted example failed");
 }
 
-
 #[test]
 fn test_bst() {
     process_example_file("examples/bst.ml").expect("bst example failed");

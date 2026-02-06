@@ -190,7 +190,10 @@ impl AxiomBuilderState {
                             )
                         } else {
                             // Keep separate: A ∧ (B → C)
-                            Proposition::And(left, Box::new(Proposition::Implication(right_left, right_right)))
+                            Proposition::And(
+                                left,
+                                Box::new(Proposition::Implication(right_left, right_right)),
+                            )
                         }
                     }
                     other => {
@@ -210,14 +213,12 @@ impl AxiomBuilderState {
     /// by strengthening implications to conjunctions where the structure better
     /// represents the logical relationship.
     fn apply_conjunction_strengthening(prop: Proposition) -> Proposition {
-        prop.map(&|p| {
-            match p {
-                Proposition::Existential(param, body) => {
-                    let new_body = Self::strengthen_implication_in_scope(&param.name, *body);
-                    Proposition::Existential(param, Box::new(new_body))
-                }
-                other => other,
+        prop.map(&|p| match p {
+            Proposition::Existential(param, body) => {
+                let new_body = Self::strengthen_implication_in_scope(&param.name, *body);
+                Proposition::Existential(param, Box::new(new_body))
             }
+            other => other,
         })
     }
 

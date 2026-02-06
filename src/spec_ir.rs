@@ -155,12 +155,8 @@ impl Expression {
                 right.fold(t, f)
             }
             Expression::UnaryOp(_, e) => e.fold(init, f),
-            Expression::Constructor(_, args) => {
-                args.iter().fold(init, |t, arg| arg.fold(t, f))
-            }
-            Expression::Tuple(args) => {
-                args.iter().fold(init, |t, arg| arg.fold(t, f))
-            }
+            Expression::Constructor(_, args) => args.iter().fold(init, |t, arg| arg.fold(t, f)),
+            Expression::Tuple(args) => args.iter().fold(init, |t, arg| arg.fold(t, f)),
             Expression::IfThenElse {
                 condition,
                 then_branch,
@@ -230,7 +226,8 @@ impl Axiom {
         if existential_count > 0 {
             // For axioms with existentials, use case analysis on the main data structure parameter.
             // Find the first non-primitive (Named) type parameter
-            let cases_param = self.params
+            let cases_param = self
+                .params
                 .iter()
                 .find(|p| matches!(p.typ, Type::Named(_)))
                 .map(|p| p.name.0.clone())
@@ -365,27 +362,20 @@ impl Proposition {
         F: Fn(Proposition) -> Proposition,
     {
         let recursed = match self {
-            Proposition::Implication(p, q) => Proposition::Implication(
-                Box::new((*p).map(f)),
-                Box::new((*q).map(f)),
-            ),
-            Proposition::And(p, q) => Proposition::And(
-                Box::new((*p).map(f)),
-                Box::new((*q).map(f)),
-            ),
-            Proposition::Or(p, q) => Proposition::Or(
-                Box::new((*p).map(f)),
-                Box::new((*q).map(f)),
-            ),
+            Proposition::Implication(p, q) => {
+                Proposition::Implication(Box::new((*p).map(f)), Box::new((*q).map(f)))
+            }
+            Proposition::And(p, q) => {
+                Proposition::And(Box::new((*p).map(f)), Box::new((*q).map(f)))
+            }
+            Proposition::Or(p, q) => Proposition::Or(Box::new((*p).map(f)), Box::new((*q).map(f))),
             Proposition::Not(p) => Proposition::Not(Box::new((*p).map(f))),
-            Proposition::Iff(p, q) => Proposition::Iff(
-                Box::new((*p).map(f)),
-                Box::new((*q).map(f)),
-            ),
-            Proposition::Existential(param, body) => Proposition::Existential(
-                param,
-                Box::new((*body).map(f)),
-            ),
+            Proposition::Iff(p, q) => {
+                Proposition::Iff(Box::new((*p).map(f)), Box::new((*q).map(f)))
+            }
+            Proposition::Existential(param, body) => {
+                Proposition::Existential(param, Box::new((*body).map(f)))
+            }
             other => other,
         };
 
@@ -449,7 +439,11 @@ impl fmt::Display for Proposition {
                 write!(f, "(iff {} {})", p, q)
             }
             Proposition::Existential(param, body) => {
-                write!(f, "fun (({} [@exists]) : {}) -> {}", param.name, param.typ, body)
+                write!(
+                    f,
+                    "fun (({} [@exists]) : {}) -> {}",
+                    param.name, param.typ, body
+                )
             }
         }
     }

@@ -121,7 +121,9 @@ impl AxiomGenerator {
         }
         // Pattern constraints should never appear here - extract_single_expr is for simple expressions only
         if !body_data.pattern_constraints.is_empty() {
-            return Err("Expected no pattern constraints for simple expression extraction".to_string());
+            return Err(
+                "Expected no pattern constraints for simple expression extraction".to_string(),
+            );
         }
         match &body_data.body_steps[0] {
             Proposition::Expr(e) => Ok(e.clone()),
@@ -152,7 +154,7 @@ impl AxiomGenerator {
                 for body_data in combination {
                     let mut all_body_steps = body_data.pattern_constraints.clone();
                     all_body_steps.extend(body_data.body_steps.clone());
-                    
+
                     let (last_prop, preceding) = all_body_steps
                         .split_last()
                         .ok_or("Expected at least one proposition step")?;
@@ -599,7 +601,8 @@ impl AxiomGenerator {
                         let branch_results = self.analyze_expression(branch, &mut branch_cache);
                         for branch_body_data in branch_results {
                             // Pattern constraints from condition (may be empty)
-                            let pattern_constraints = condition_body_data.pattern_constraints.clone();
+                            let pattern_constraints =
+                                condition_body_data.pattern_constraints.clone();
 
                             // Body steps: preceding condition steps + condition equality + branch steps
                             let mut body_steps = preceding_conds.to_vec();
@@ -662,8 +665,7 @@ impl AxiomGenerator {
                 let mut results = Vec::new();
                 for extraction in combined {
                     let mut body_steps = extraction.preceding_steps.concat();
-                    body_steps
-                        .push(Proposition::Expr(Expression::Tuple(extraction.expressions)));
+                    body_steps.push(Proposition::Expr(Expression::Tuple(extraction.expressions)));
 
                     results.push(BodyPropositionData {
                         pattern_constraints: vec![],

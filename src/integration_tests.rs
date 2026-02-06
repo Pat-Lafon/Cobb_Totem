@@ -88,7 +88,7 @@ let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with
     match l with
     | Nil -> 0
     | Cons { head = x; tail = xs } -> 1 + len xs";
-    
+
         validate_program(program_str, &["len"]);
     }
 
