@@ -435,7 +435,7 @@ impl AxiomBuilderState {
             let result_param = binding
                 .return_type
                 .clone()
-                .unwrap_or_else(|| crate::prog_ir::Type::Int);
+                .unwrap_or(crate::prog_ir::Type::Int);
 
             let params = vec![
                 Parameter::universal(list_param_name.clone(), list_param_type),
