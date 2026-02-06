@@ -600,9 +600,10 @@ impl AxiomGenerator {
                         let mut branch_cache = cache.clone();
                         let branch_results = self.analyze_expression(branch, &mut branch_cache);
                         for branch_body_data in branch_results {
-                            // Pattern constraints from condition (may be empty)
-                            let pattern_constraints =
+                            // Pattern constraints: from condition + nested patterns in branch
+                            let mut pattern_constraints =
                                 condition_body_data.pattern_constraints.clone();
+                            pattern_constraints.extend(branch_body_data.pattern_constraints.clone());
 
                             // Body steps: preceding condition steps + condition equality + branch steps
                             let mut body_steps = preceding_conds.to_vec();

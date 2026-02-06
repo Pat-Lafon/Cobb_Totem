@@ -63,7 +63,20 @@ mod integration_tests {
 
         validate_lean_code(&lean_code).unwrap_or_else(|e| {
             eprintln!("Generated Lean code:\n{}", lean_code);
-            panic!("Generated axioms failed Lean validation:\n{}", e)
+
+            let error_lines: Vec<&str> = e.lines().collect();
+            let error_preview = if error_lines.len() > 30 {
+                format!(
+                    "Validation error (first 30 lines of {}):\n{}\n... ({} more lines)",
+                    error_lines.len(),
+                    error_lines[..30].join("\n"),
+                    error_lines.len() - 30
+                )
+            } else {
+                e.clone()
+            };
+
+            panic!("Generated axioms failed Lean validation:\n{}", error_preview)
         });
     }
 
