@@ -10,10 +10,11 @@ use crate::spec_ir::{Axiom, DOMAIN_AXIOM_SUFFIX, Expression, Parameter, Proposit
 pub type ProofTacticFn = Box<dyn Fn(&Axiom) -> String>;
 
 /// Data for a single axiom body with its parameters
-/// The proposition_steps are composed into an implication chain during axiom generation
+/// Explicitly separates pattern constraints from body computation steps
 #[derive(Debug, Clone)]
 pub struct BodyPropositionData {
-    pub proposition_steps: Vec<Proposition>,
+    pub pattern_constraints: Vec<Proposition>,
+    pub body_steps: Vec<Proposition>,
     pub additional_parameters: Vec<Parameter>,
 }
 
@@ -261,7 +262,8 @@ impl AxiomBuilderState {
     where
         F: Fn(&Axiom) -> String,
     {
-        let steps = &body_prop.proposition_steps;
+        let mut all_steps = body_prop.pattern_constraints.clone();
+        all_steps.extend(body_prop.body_steps.clone());
 
         // Collect existential parameters
         let (uni_params, ext_params): (Vec<_>, Vec<_>) = body_prop
@@ -271,7 +273,7 @@ impl AxiomBuilderState {
             .partition(|p| p.quantifier == Quantifier::Universal);
 
         // Build implication chain
-        let mut steps_body = Self::build_implication_chain(steps);
+        let mut steps_body = Self::build_implication_chain(&all_steps);
 
         // Add existential quantifiers lazily to the chain
         steps_body = Self::add_lazy_existentials_to_chain(steps_body, &ext_params);
@@ -313,7 +315,8 @@ impl AxiomBuilderState {
     where
         F: Fn(&Axiom) -> String,
     {
-        let steps = &body_prop.proposition_steps;
+        let mut all_steps = body_prop.pattern_constraints.clone();
+        all_steps.extend(body_prop.body_steps.clone());
 
         // Collect existential parameters
         let (ext_params, uni_params): (Vec<_>, Vec<_>) = body_prop
@@ -326,7 +329,7 @@ impl AxiomBuilderState {
         let predicate_args = self.build_predicate_args_for(binding);
         let mut body = Proposition::Predicate(binding.name.0.clone(), predicate_args);
 
-        for step in steps.iter().rev() {
+        for step in all_steps.iter().rev() {
             body = Proposition::Implication(Box::new(step.clone()), Box::new(body));
         }
 

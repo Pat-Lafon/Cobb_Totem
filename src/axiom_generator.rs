@@ -106,10 +106,11 @@ impl AxiomGenerator {
             ));
         }
         let body_data = results.into_iter().next().unwrap();
-        if body_data.proposition_steps.len() != 1 {
+        let total_steps = body_data.pattern_constraints.len() + body_data.body_steps.len();
+        if total_steps != 1 {
             return Err(format!(
                 "Expected exactly one proposition step, got {}",
-                body_data.proposition_steps.len()
+                total_steps
             ));
         }
         if !body_data.additional_parameters.is_empty() {
@@ -118,7 +119,11 @@ impl AxiomGenerator {
                 body_data.additional_parameters.len()
             ));
         }
-        match &body_data.proposition_steps[0] {
+        // Pattern constraints should never appear here - extract_single_expr is for simple expressions only
+        if !body_data.pattern_constraints.is_empty() {
+            return Err("Expected no pattern constraints for simple expression extraction".to_string());
+        }
+        match &body_data.body_steps[0] {
             Proposition::Expr(e) => Ok(e.clone()),
             _ => Err("Expected proposition step to be an expression".to_string()),
         }
@@ -145,8 +150,10 @@ impl AxiomGenerator {
                 let mut all_params = Vec::new();
 
                 for body_data in combination {
-                    let (last_prop, preceding) = body_data
-                        .proposition_steps
+                    let mut all_body_steps = body_data.pattern_constraints.clone();
+                    all_body_steps.extend(body_data.body_steps.clone());
+                    
+                    let (last_prop, preceding) = all_body_steps
                         .split_last()
                         .ok_or("Expected at least one proposition step")?;
 
@@ -359,7 +366,8 @@ impl AxiomGenerator {
     ) -> Vec<BodyPropositionData> {
         match body {
             crate::prog_ir::Expression::Variable(var_name) => vec![BodyPropositionData {
-                proposition_steps: vec![Proposition::Expr(Expression::Variable(var_name.clone()))],
+                pattern_constraints: vec![],
+                body_steps: vec![Proposition::Expr(Expression::Variable(var_name.clone()))],
                 additional_parameters: vec![],
             }],
             crate::prog_ir::Expression::Constructor(constructor_name, expressions) => {
@@ -371,7 +379,8 @@ impl AxiomGenerator {
                     })
                     .collect();
                 vec![BodyPropositionData {
-                    proposition_steps: vec![Proposition::Expr(Expression::Constructor(
+                    pattern_constraints: vec![],
+                    body_steps: vec![Proposition::Expr(Expression::Constructor(
                         constructor_name.clone(),
                         converted_expressions,
                     ))],
@@ -379,7 +388,8 @@ impl AxiomGenerator {
                 }]
             }
             crate::prog_ir::Expression::Literal(literal) => vec![BodyPropositionData {
-                proposition_steps: vec![Proposition::Expr(Expression::Literal(literal.clone()))],
+                pattern_constraints: vec![],
+                body_steps: vec![Proposition::Expr(Expression::Literal(literal.clone()))],
                 additional_parameters: vec![],
             }],
             crate::prog_ir::Expression::UnaryOp(unary_op, expression) => {
@@ -396,14 +406,15 @@ impl AxiomGenerator {
                         extraction.expressions.len()
                     );
 
-                    let mut proposition_steps = extraction.preceding_steps.concat();
-                    proposition_steps.push(Proposition::Expr(Expression::UnaryOp(
+                    let mut body_steps = extraction.preceding_steps.concat();
+                    body_steps.push(Proposition::Expr(Expression::UnaryOp(
                         *unary_op,
                         Box::new(extraction.expressions[0].clone()),
                     )));
 
                     results.push(BodyPropositionData {
-                        proposition_steps,
+                        pattern_constraints: vec![],
+                        body_steps,
                         additional_parameters: extraction.parameters,
                     });
                 }
@@ -423,15 +434,16 @@ impl AxiomGenerator {
                         extraction.expressions.len()
                     );
 
-                    let mut proposition_steps = extraction.preceding_steps.concat();
-                    proposition_steps.push(Proposition::Expr(Expression::BinaryOp(
+                    let mut body_steps = extraction.preceding_steps.concat();
+                    body_steps.push(Proposition::Expr(Expression::BinaryOp(
                         Box::new(extraction.expressions[0].clone()),
                         *binary_op,
                         Box::new(extraction.expressions[1].clone()),
                     )));
 
                     results.push(BodyPropositionData {
-                        proposition_steps,
+                        pattern_constraints: vec![],
+                        body_steps,
                         additional_parameters: extraction.parameters,
                     });
                 }
@@ -470,16 +482,17 @@ impl AxiomGenerator {
                         // Reuse existing existential variable, don't add parameter
                         let existential = Expression::Variable(cached_var.clone());
 
-                        let mut proposition_steps = extraction.preceding_steps.concat();
+                        let mut body_steps = extraction.preceding_steps.concat();
                         let mut predicate_args = extraction.expressions;
                         predicate_args.push(existential.clone());
 
-                        proposition_steps
+                        body_steps
                             .push(Proposition::Predicate(func_name.0.clone(), predicate_args));
-                        proposition_steps.push(Proposition::Expr(existential));
+                        body_steps.push(Proposition::Expr(existential));
 
                         results.push(BodyPropositionData {
-                            proposition_steps,
+                            pattern_constraints: vec![],
+                            body_steps,
                             additional_parameters: extraction.parameters,
                         });
                     } else {
@@ -489,13 +502,13 @@ impl AxiomGenerator {
 
                         let existential = Expression::Variable(exists_var.clone());
 
-                        let mut proposition_steps = extraction.preceding_steps.concat();
+                        let mut body_steps = extraction.preceding_steps.concat();
                         let mut predicate_args = extraction.expressions;
                         predicate_args.push(existential.clone());
 
-                        proposition_steps
+                        body_steps
                             .push(Proposition::Predicate(func_name.0.clone(), predicate_args));
-                        proposition_steps.push(Proposition::Expr(existential));
+                        body_steps.push(Proposition::Expr(existential));
 
                         extraction.parameters.push(Parameter::existential(
                             exists_var,
@@ -505,7 +518,8 @@ impl AxiomGenerator {
                         ));
 
                         results.push(BodyPropositionData {
-                            proposition_steps,
+                            pattern_constraints: vec![],
+                            body_steps,
                             additional_parameters: extraction.parameters,
                         });
                     }
@@ -530,18 +544,17 @@ impl AxiomGenerator {
                             self.pattern_to_predicate_proposition(pattern_constraint_base, pattern);
 
                         // Check if the final step is already an equality with RESULT_PARAM
-                        let (last, rest) = branch_body_data.proposition_steps.split_last().unwrap();
+                        let (last, rest) = branch_body_data.body_steps.split_last().unwrap();
 
-                        let mut final_steps = vec![pattern_constraint];
-                        final_steps.extend(rest.to_vec());
+                        let mut body_steps = rest.to_vec();
 
                         if Self::is_result_equality(last) {
                             // Final step is already wrapped with = res, don't wrap again
-                            final_steps.push(last.clone());
+                            body_steps.push(last.clone());
                         } else {
                             // Wrap the final expression with = RESULT_PARAM
                             let last_expr = last.as_expr();
-                            final_steps.push(Proposition::Expr(Expression::BinaryOp(
+                            body_steps.push(Proposition::Expr(Expression::BinaryOp(
                                 Box::new(last_expr.clone()),
                                 crate::prog_ir::BinaryOp::Eq,
                                 Box::new(Expression::Variable(RESULT_PARAM.into())),
@@ -551,8 +564,13 @@ impl AxiomGenerator {
                         let mut all_vars = Parameter::from_vars(&pattern_vars);
                         all_vars.extend(branch_body_data.additional_parameters);
 
+                        // Combine: outer pattern constraint + any nested pattern constraints + body steps
+                        let mut all_patterns = vec![pattern_constraint];
+                        all_patterns.extend(branch_body_data.pattern_constraints.clone());
+
                         results.push(BodyPropositionData {
-                            proposition_steps: final_steps,
+                            pattern_constraints: all_patterns,
+                            body_steps,
                             additional_parameters: all_vars,
                         });
                     }
@@ -569,7 +587,7 @@ impl AxiomGenerator {
 
                 for condition_body_data in condition_results {
                     let (last_cond, preceding_conds) = condition_body_data
-                        .proposition_steps
+                        .body_steps
                         .split_last()
                         .unwrap_or_else(|| panic!("Expected at least one condition step"));
                     let condition_expr = last_cond.as_expr().clone();
@@ -580,19 +598,24 @@ impl AxiomGenerator {
                         let mut branch_cache = cache.clone();
                         let branch_results = self.analyze_expression(branch, &mut branch_cache);
                         for branch_body_data in branch_results {
-                            let mut steps: Vec<Proposition> = preceding_conds.to_vec();
-                            steps.push(Proposition::Expr(Expression::BinaryOp(
+                            // Pattern constraints from condition (may be empty)
+                            let pattern_constraints = condition_body_data.pattern_constraints.clone();
+
+                            // Body steps: preceding condition steps + condition equality + branch steps
+                            let mut body_steps = preceding_conds.to_vec();
+                            body_steps.push(Proposition::Expr(Expression::BinaryOp(
                                 Box::new(condition_expr.clone()),
                                 crate::prog_ir::BinaryOp::Eq,
                                 Box::new(Expression::Literal(crate::Literal::Bool(is_true))),
                             )));
-                            steps.extend(branch_body_data.proposition_steps);
+                            body_steps.extend(branch_body_data.body_steps);
 
                             let mut params = condition_body_data.additional_parameters.clone();
                             params.extend(branch_body_data.additional_parameters);
 
                             results.push(BodyPropositionData {
-                                proposition_steps: steps,
+                                pattern_constraints,
+                                body_steps,
                                 additional_parameters: params,
                             });
                         }
@@ -616,15 +639,16 @@ impl AxiomGenerator {
                     );
 
                     // Flatten all preceding steps
-                    let mut all_steps = extraction.preceding_steps.concat();
+                    let mut body_steps = extraction.preceding_steps.concat();
 
                     // Add the final Not expression
-                    all_steps.push(Proposition::Expr(Expression::Not(Box::new(
+                    body_steps.push(Proposition::Expr(Expression::Not(Box::new(
                         extraction.expressions[0].clone(),
                     ))));
 
                     results.push(BodyPropositionData {
-                        proposition_steps: all_steps,
+                        pattern_constraints: vec![],
+                        body_steps,
                         additional_parameters: extraction.parameters,
                     });
                 }
@@ -637,12 +661,13 @@ impl AxiomGenerator {
 
                 let mut results = Vec::new();
                 for extraction in combined {
-                    let mut proposition_steps = extraction.preceding_steps.concat();
-                    proposition_steps
+                    let mut body_steps = extraction.preceding_steps.concat();
+                    body_steps
                         .push(Proposition::Expr(Expression::Tuple(extraction.expressions)));
 
                     results.push(BodyPropositionData {
-                        proposition_steps,
+                        pattern_constraints: vec![],
+                        body_steps,
                         additional_parameters: extraction.parameters,
                     });
                 }

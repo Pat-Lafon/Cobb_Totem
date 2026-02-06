@@ -219,7 +219,11 @@ pub(crate) mod test_helpers {
             .map(|(_, props)| {
                 props
                     .iter()
-                    .map(|axiom| axiom.proposition_steps.clone())
+                    .map(|axiom| {
+                        let mut steps = axiom.pattern_constraints.clone();
+                        steps.extend(axiom.body_steps.clone());
+                        steps
+                    })
                     .collect()
             })
             .unwrap_or_default()
