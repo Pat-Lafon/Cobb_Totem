@@ -15,6 +15,7 @@ pub struct Axiom {
     pub params: Vec<Parameter>,
     pub body: Proposition,
     pub proof: Option<String>,
+    pub attributes: Vec<String>,
 }
 
 /// Quantification mode for a parameter
@@ -241,8 +242,7 @@ impl Axiom {
             tactic.push_str(&format!("cases {} with\n", cases_param));
             // Use generic patterns without hardcoding Nil/Cons
             tactic.push_str("| _ => \n");
-            tactic.push_str("  simp_all\n");
-            tactic.push_str("  try grind\n");
+            tactic.push_str("  try simp_all; grind\n");
             tactic.push_str("  try aesop\n");
 
             tactic
@@ -285,7 +285,15 @@ impl ToLean for Axiom {
             Some("sorry") | None => "sorry".to_string(),
             Some(p) => format!("by {}", p),
         };
-        format!("theorem {} : {} := {}", self.name, theorem_statement, proof)
+
+        // Add attributes if present
+        let attrs_str = if self.attributes.is_empty() {
+            String::new()
+        } else {
+            format!("@[{}] ", self.attributes.join(", "))
+        };
+
+        format!("{}theorem {} : {} := {}", attrs_str, self.name, theorem_statement, proof)
     }
 }
 
@@ -650,6 +658,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )))),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -702,6 +711,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )))),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build context with automatic BEq theorem attachment using builder pattern
@@ -755,6 +765,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )))),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -806,6 +817,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )))),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -856,6 +868,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )))),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -903,6 +916,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -960,6 +974,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )))),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1023,6 +1038,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1092,6 +1108,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1138,6 +1155,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1195,6 +1213,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1250,6 +1269,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1332,6 +1352,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1414,6 +1435,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1463,6 +1485,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )))),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1521,6 +1544,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1568,6 +1592,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )))),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         let display_output = axiom.to_string();
@@ -1628,6 +1653,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 )),
             ),
             proof: Some("grind".to_string()),
+            attributes: vec![],
         };
 
         let display_output = axiom.to_string();

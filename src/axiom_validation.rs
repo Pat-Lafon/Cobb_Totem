@@ -171,6 +171,7 @@ mod tests {
             params,
             body,
             proof: None,
+            attributes: vec![],
         };
 
         assert!(
@@ -202,6 +203,7 @@ mod tests {
             params,
             body,
             proof: None,
+            attributes: vec![],
         };
 
         axiom
