@@ -83,11 +83,11 @@ impl AxiomBuilderState {
                 Proposition::Expr(expr) => expr.fold(false, &|found, e| {
                     found || matches!(e, Expression::Variable(v) if v == var)
                 }),
-                Proposition::Predicate(_, args) => args
-                    .iter()
-                    .any(|arg| arg.fold(false, &|found, e| {
+                Proposition::Predicate(_, args) => args.iter().any(|arg| {
+                    arg.fold(false, &|found, e| {
                         found || matches!(e, Expression::Variable(v) if v == var)
-                    })),
+                    })
+                }),
                 _ => found,
             }
         })
@@ -111,8 +111,14 @@ impl AxiomBuilderState {
 
         let mut matching_outputs = body_steps.iter().filter_map(|step| {
             if let Proposition::Expr(Expression::BinaryOp(lhs, BinaryOp::Eq, rhs)) = step {
-                let lhs_has_result = Self::contains_variable(&Proposition::Expr(lhs.as_ref().clone()), &result_param_var);
-                let rhs_has_result = Self::contains_variable(&Proposition::Expr(rhs.as_ref().clone()), &result_param_var);
+                let lhs_has_result = Self::contains_variable(
+                    &Proposition::Expr(lhs.as_ref().clone()),
+                    &result_param_var,
+                );
+                let rhs_has_result = Self::contains_variable(
+                    &Proposition::Expr(rhs.as_ref().clone()),
+                    &result_param_var,
+                );
 
                 // Extract output if RESULT_PARAM is on exactly one side
                 let output = match (lhs_has_result, rhs_has_result) {
@@ -359,6 +365,96 @@ impl AxiomBuilderState {
         }
     }
 
+    /// Reduce the scope of existential quantifiers by moving them inside implications.
+    ///
+    /// Transforms `∃v. A → B` to `(∃v. A) → B` when v does not appear in B.
+    /// This reduces unnecessary quantification scope and makes formulas more readable.
+    ///
+    /// Example:
+    /// - Input:  `∃v. prop(v) → prop(v) → prop_no_v`
+    /// - Output: `(∃v. prop(v) → prop(v)) → prop_no_v`
+    ///
+    /// The transformation is applied recursively through the entire proposition tree.
+    fn reduce_existential_scope(prop: &Proposition) -> Proposition {
+        match prop {
+            Proposition::Existential(param, body) => {
+                let param_var = &param.name;
+
+                // Check if the parameter is used in the body
+                match body.as_ref() {
+                    Proposition::Implication(antecedent, consequent) => {
+                         let consequent_uses_var = Self::contains_variable(consequent, param_var);
+
+                         if !consequent_uses_var {
+                             // Variable not used in consequent: push existential down
+                             // Transform: ∃v. A → B  =>  (∃v. A) → B (when v ∉ B)
+                             let wrapped_antecedent = Proposition::Existential(
+                                 param.clone(),
+                                 Box::new(*antecedent.clone()),
+                             );
+                             let new_implication = Proposition::Implication(
+                                 Box::new(wrapped_antecedent),
+                                 consequent.clone(),
+                             );
+                             // Recursively reduce scope in the entire result (both antecedent and consequent)
+                             Self::reduce_existential_scope(&new_implication)
+                         } else if let Proposition::Implication(inner_ant, inner_cons) = consequent.as_ref() {
+                             // Consequent is itself an implication: check if innermost doesn't use var
+                             if !Self::contains_variable(inner_cons, param_var) {
+                                 // Inner consequent doesn't use var
+                                 // Transform: ∃v. A → (B → C) => (∃v. A → B) → C (when v ∉ C)
+                                 let combined_impl = Proposition::Implication(
+                                     antecedent.clone(),
+                                     inner_ant.clone(),
+                                 );
+                                 let wrapped = Proposition::Existential(
+                                     param.clone(),
+                                     Box::new(combined_impl),
+                                 );
+                                 let new_impl = Proposition::Implication(
+                                     Box::new(wrapped),
+                                     inner_cons.clone(),
+                                 );
+                                 // Recursively apply further reductions
+                                 Self::reduce_existential_scope(&new_impl)
+                             } else {
+                                 // Inner consequent also uses var, keep existential wrapping
+                                 Proposition::Existential(
+                                     param.clone(),
+                                     Box::new(Self::reduce_existential_scope(body)),
+                                 )
+                             }
+                         } else {
+                             // Variable is used but consequent isn't an implication
+                             // keep existential wrapping, but recurse into body
+                             Proposition::Existential(
+                                 param.clone(),
+                                 Box::new(Self::reduce_existential_scope(body)),
+                             )
+                         }
+                     }
+                    other => {
+                        // Not an implication: keep existential wrapping, recurse into body
+                        Proposition::Existential(
+                            param.clone(),
+                            Box::new(Self::reduce_existential_scope(other)),
+                        )
+                    }
+                }
+            }
+            Proposition::Implication(antecedent, consequent) => {
+                // First reduce the consequent, then check if we can reduce the antecedent further
+                let reduced_consequent = Self::reduce_existential_scope(consequent);
+                let reduced_antecedent = Self::reduce_existential_scope(antecedent);
+                Proposition::Implication(
+                    Box::new(reduced_antecedent),
+                    Box::new(reduced_consequent),
+                )
+            }
+            other => other.clone(),
+        }
+    }
+
     /// Build forward axiom for a given binding and body proposition
     fn build_forward_axiom_for<F>(
         &self,
@@ -407,6 +503,7 @@ impl AxiomBuilderState {
             body,
             proof: None,
             attributes: vec![],
+            is_internal: false,
         };
 
         axiom.proof = Some(proof_fn(&axiom));
@@ -448,6 +545,9 @@ impl AxiomBuilderState {
         // Apply conjunction strengthening as a separate post-processing step
         body = Self::apply_conjunction_strengthening(body);
 
+        // Reduce existential scope after conjunction strengthening
+        body = Self::reduce_existential_scope(&body);
+
         let params = self.build_and_partition_params_for(binding, &uni_params);
 
         let mut axiom = Axiom {
@@ -456,6 +556,7 @@ impl AxiomBuilderState {
             body,
             proof: None,
             attributes: vec![],
+            is_internal: false,
         };
 
         axiom.proof = Some(proof_fn(&axiom));
@@ -545,6 +646,7 @@ impl AxiomBuilderState {
             body,
             proof: None,
             attributes: vec![],
+            is_internal: false,
         };
 
         axiom.proof = Some(proof_fn(&axiom));
@@ -632,6 +734,7 @@ impl AxiomBuilderState {
             body: final_body,
             proof: None,
             attributes: vec![],
+            is_internal: false,
         };
 
         axiom.proof = Some(proof_fn(&axiom));
@@ -690,7 +793,9 @@ impl AxiomBuilderState {
             axioms.push(self.build_forward_axiom_for(binding, idx, body_prop, proof_fn));
             axioms.push(self.build_reverse_axiom_for(binding, idx, body_prop, proof_fn));
 
-            if let Some(infer_axiom) = self.build_pattern_inference_axiom(binding, idx, body_prop, proof_fn) {
+            if let Some(infer_axiom) =
+                self.build_pattern_inference_axiom(binding, idx, body_prop, proof_fn)
+            {
                 axioms.push(infer_axiom);
             }
 
@@ -772,6 +877,7 @@ impl AxiomBuilderState {
                 body,
                 proof: None,
                 attributes: vec!["simp".to_string(), "grind".to_string()],
+                is_internal: false,
             };
 
             // Use fun_induction tactic on the first (structural) parameter
@@ -798,18 +904,13 @@ impl AxiomBuilderState {
             // Build function call to the impl function: (impl_name param)
             // Since we only handle single-parameter measures here, this is straightforward
             let param_var = Expression::Variable(binding.params[0].0.clone());
-            let impl_call = Expression::FieldAccess(
-                impl_name.clone(),
-                Box::new(param_var),
-            );
+            let impl_call = Expression::FieldAccess(impl_name.clone(), Box::new(param_var));
 
-            let derived_body = Proposition::Not(Box::new(Proposition::Expr(
-                Expression::BinaryOp(
-                    Box::new(impl_call),
-                    BinaryOp::Eq,
-                    Box::new(Expression::Literal(crate::Literal::Int(-1))),
-                ),
-            )));
+            let derived_body = Proposition::Not(Box::new(Proposition::Expr(Expression::BinaryOp(
+                Box::new(impl_call),
+                BinaryOp::Eq,
+                Box::new(Expression::Literal(crate::Literal::Int(-1))),
+            ))));
 
             let mut derived_axiom = Axiom {
                 name: format!("{}_impl_ne_negSucc", binding.name.0),
@@ -817,6 +918,7 @@ impl AxiomBuilderState {
                 body: derived_body,
                 proof: None,
                 attributes: vec!["simp".to_string(), "grind".to_string()],
+                is_internal: true,
             };
 
             // Build proof that references all parameters to the domain axiom
@@ -840,7 +942,9 @@ impl AxiomBuilderState {
     }
 
     /// Build all axioms from the stored prepared functions
-    pub fn build(&self) -> Result<Vec<Axiom>, String> {
+    /// Generate all axioms (both exported and internal) in proper order
+    /// This is crate-internal as it returns the internal representation
+    pub(crate) fn generate_all(&self) -> Result<Vec<Axiom>, String> {
         let proof_fn = self
             .proof
             .as_ref()
@@ -866,12 +970,188 @@ impl AxiomBuilderState {
         axioms.iter().try_for_each(|axiom| axiom.validate())?;
         Ok(axioms)
     }
+
+    /// Generate OCaml axioms for export
+    /// Returns formatted OCaml code with all exported axioms (internal axioms excluded)
+    pub fn build_ocaml_export(&self) -> Result<String, String> {
+        let all_axioms = self.generate_all()?;
+
+        let ocaml_axioms: Vec<String> = all_axioms
+            .iter()
+            .filter(|a| !a.is_internal())
+            .map(|a| format!("let[@axiom] {} =\n  {}", a.name, a))
+            .collect();
+
+        Ok(format!(
+            "(* Generated axioms *)\n{}",
+            ocaml_axioms.join("\n\n")
+        ))
+    }
+
+    /// Validate all axioms through Lean backend
+    /// Builds Lean code with all axioms (exported + internal) in proper order
+    /// Returns Ok(()) if valid, Err with validation error message if invalid
+    pub fn validate_with_lean(
+        &self,
+        nodes: Vec<crate::prog_ir::AstNode>,
+        type_decls: &[crate::prog_ir::TypeDecl],
+    ) -> Result<(), String> {
+        use crate::lean_backend::LeanContextBuilder;
+        use crate::lean_validation::validate_lean_code;
+
+        let all_axioms = self.generate_all()?;
+
+        let mut context_builder = LeanContextBuilder::new();
+        for type_decl in type_decls {
+            let theorems = type_decl.generate_complete_lawful_beq();
+            context_builder = context_builder
+                .with_type_theorems(&type_decl.name, theorems)
+                .with_helper_predicates(&type_decl.name);
+        }
+
+        let lean_code = context_builder
+            .with_nodes(nodes)
+            .with_axioms(all_axioms)
+            .build();
+
+        if let Err(e) = validate_lean_code(&lean_code) {
+            eprintln!("{lean_code}");
+            Err(e)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Get exported axioms only (for testing/inspection)
+    /// Returns axioms that should appear in OCaml output (excludes internal axioms)
+    pub(crate) fn exported_axioms(&self) -> Result<Vec<Axiom>, String> {
+        let all_axioms = self.generate_all()?;
+        Ok(all_axioms
+            .into_iter()
+            .filter(|a| !a.is_internal())
+            .collect())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use crate::ToLean;
     use crate::test_helpers;
+    use crate::spec_ir::{Expression, Parameter, Proposition};
+    use crate::prog_ir::Type;
+    use super::AxiomBuilderState;
+
+    /// Helper to create an equality proposition
+    fn eq(left: Expression, right: Expression) -> Proposition {
+        Proposition::Expr(Expression::BinaryOp(
+            Box::new(left),
+            crate::prog_ir::BinaryOp::Eq,
+            Box::new(right),
+        ))
+    }
+
+    #[test]
+    fn test_reduce_existential_scope_moves_unused_var_inside() {
+        // This test demonstrates how reduce_existential_scope progressively narrows
+        // the scope of existential quantifiers to the minimal region where the variable
+        // is actually used.
+        //
+        // The algorithm pushes existential quantifiers out of consequents that don't use
+        // them. For nested implications, it recognizes when the innermost consequent
+        // doesn't use the variable and restructures accordingly.
+        //
+        // Input: ∃v. (prop1(v) → (prop2(v) → final_no_v))
+        // 
+        // Transformation:
+        // - Consequent (prop2(v) → final_no_v) uses v, but its inner consequent (final_no_v) doesn't
+        // - Apply: ∃v. A → (B → C) => (∃v. A → B) → C (when v ∉ C)
+        // - Result: (∃v. prop1(v) → prop2(v)) → final_no_v
+        //
+        // The scope of v is now reduced to only wrap the portion where it's used.
+
+        let prop1_v = eq("v".into(), 0i64.into());    // v = 0
+        let prop2_v = eq("v".into(), 1i64.into());    // v = 1
+        let final_no_v = eq("x".into(), 2i64.into()); // x = 2 (no v)
+
+        // innermost implication: prop2(v) → final_no_v
+        let inner_impl = Proposition::Implication(
+            Box::new(prop2_v.clone()),
+            Box::new(final_no_v.clone()),
+        );
+
+        // outer implication: prop1(v) → (prop2(v) → final_no_v)
+        let outer_impl = Proposition::Implication(
+            Box::new(prop1_v.clone()),
+            Box::new(inner_impl.clone()),
+        );
+
+        // wrap with existential: ∃v. prop1(v) → (prop2(v) → final_no_v)
+        let original = Proposition::Existential(
+            Box::new(Parameter::existential("v", Type::Int)),
+            Box::new(outer_impl),
+        );
+
+        let reduced = AxiomBuilderState::reduce_existential_scope(&original);
+
+        // After reduction: (∃v. prop1(v) → prop2(v)) → final_no_v
+        // The existential has been pulled out and repositioned to wrap only the part where v is used
+        
+        // Expected structure
+        let combined_impl = Proposition::Implication(
+            Box::new(prop1_v),
+            Box::new(prop2_v),
+        );
+        let existential_ant = Proposition::Existential(
+            Box::new(Parameter::existential("v", Type::Int)),
+            Box::new(combined_impl),
+        );
+        let expected = Proposition::Implication(
+            Box::new(existential_ant),
+            Box::new(final_no_v),
+        );
+        
+        assert_eq!(reduced, expected, "Existential should be hoisted out of final_no_v");
+    }
+
+    #[test]
+    fn test_reduce_existential_scope_no_change_when_used() {
+        // When variable is used in consequent, scope reduction doesn't apply.
+        // Input: ∃v. prop(v) → prop(v)
+        // Expected: unchanged (v is used in consequent)
+        let prop_v = eq("v".into(), 0i64.into());
+        let inner = Proposition::Implication(Box::new(prop_v.clone()), Box::new(prop_v.clone()));
+        let original = Proposition::Existential(
+            Box::new(Parameter::existential("v", Type::Int)),
+            Box::new(inner),
+        );
+
+        let reduced = AxiomBuilderState::reduce_existential_scope(&original);
+        assert_eq!(reduced, original);
+    }
+
+    #[test]
+    fn test_reduce_existential_scope_pushes_to_antecedent() {
+        // When variable is unused in consequent, scope is reduced.
+        // Input: ∃u. prop(u) → final
+        // Expected: (∃u. prop(u)) → final (u moved to antecedent only)
+        let prop_u = eq("u".into(), 0i64.into());
+        let final_prop = eq("x".into(), 1i64.into());
+        let implication = Proposition::Implication(Box::new(prop_u.clone()), Box::new(final_prop.clone()));
+        let original = Proposition::Existential(
+            Box::new(Parameter::existential("u", Type::Int)),
+            Box::new(implication),
+        );
+
+        let reduced = AxiomBuilderState::reduce_existential_scope(&original);
+        
+        // Build expected: (∃u. prop(u)) → final
+        let existential_ant = Proposition::Existential(
+            Box::new(Parameter::existential("u", Type::Int)),
+            Box::new(prop_u),
+        );
+        let expected = Proposition::Implication(Box::new(existential_ant), Box::new(final_prop));
+        assert_eq!(reduced, expected);
+    }
 
     #[test]
     fn test_generate_axioms_from_length_function() {
@@ -888,15 +1168,16 @@ mod tests {
             .prepare_function(&len_fn)
             .expect("Failed to prepare len");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
 
         // Validate axioms with Lean backend
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -909,19 +1190,20 @@ mod tests {
         let len_fn = test_helpers::find_function(&parsed_nodes, "len");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&len_fn)
             .expect("Failed to prepare len");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
+
+        // Generate all axioms including internal ones (for checking the derived lemma)
+        let all_axioms = builder.generate_all().expect("Failed to generate axioms");
 
         // Check that len_impl_ne_negSucc axiom was generated
-        let ne_negsucc = axioms
+        let ne_negsucc = all_axioms
             .iter()
             .find(|a| a.name == "len_impl_ne_negSucc")
             .expect("len_impl_ne_negSucc axiom should be generated");
@@ -936,7 +1218,9 @@ mod tests {
         );
 
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -949,19 +1233,19 @@ mod tests {
         let sorted_fn = test_helpers::find_function(&parsed_nodes, "sorted");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&sorted_fn)
             .expect("Failed to prepare sorted");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
 
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -1026,7 +1310,7 @@ mod tests {
         let lean_output = sorted_2_rev.to_lean();
         assert_eq!(
             lean_output,
-            "theorem sorted_2_rev : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs)) → ((((is_cons xs) ∧ ((head xs) = y)) ∧ ((tail xs) = ys)) → (∃ res_0 : Bool, (((sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res)))) → (sorted l res))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n"
+            "theorem sorted_2_rev : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs)) → ((((is_cons xs) ∧ ((head xs) = y)) ∧ ((tail xs) = ys)) → ((∃ res_0 : Bool, ((sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res))))) → (sorted l res)))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n"
         );
 
         test_helpers::validate_axioms(parsed_nodes, axioms);
@@ -1180,9 +1464,8 @@ mod tests {
             .expect("mem_1_rev axiom should exist");
 
         // Check the complete Lean representation
-        // Note: Conjunction strengthening pulls conjunction into nested implications:
-        // (A ∧ (B → C)) becomes ((A ∧ B) → C) when both A and B reference the existential
-        let expected = "theorem mem_1_rev : ∀ x : Int, ∀ l : ilist, ∀ h : Int, ∀ t : ilist, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t)) → (∃ res_0 : Bool, (((mem x t res_0) ∧ ((((h = x) ∨ res_0) ∧ res) ∨ (¬(((h = x) ∨ res_0)) ∧ ¬(res)))) → (mem x l res)))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n";
+        // Note: Existential scope reduction hoists ∃res_0 out of the final consequent
+        let expected = "theorem mem_1_rev : ∀ x : Int, ∀ l : ilist, ∀ h : Int, ∀ t : ilist, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t)) → ((∃ res_0 : Bool, ((mem x t res_0) ∧ ((((h = x) ∨ res_0) ∧ res) ∨ (¬(((h = x) ∨ res_0)) ∧ ¬(res))))) → (mem x l res))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n";
         assert_eq!(
             mem_1_rev.to_lean(),
             expected,
@@ -1202,16 +1485,16 @@ mod tests {
         let height_fn = test_helpers::find_function(&parsed_nodes, "height");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&height_fn)
             .expect("Failed to prepare height");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
+
+        let axioms = builder.exported_axioms().expect("Failed to export axioms");
 
         let height_1 = axioms
             .iter()
@@ -1231,7 +1514,9 @@ mod tests {
         );
 
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -1245,7 +1530,7 @@ mod tests {
         let complete_fn = test_helpers::find_function(&parsed_nodes, "complete");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&height_fn)
             .expect("Failed to prepare height");
@@ -1253,14 +1538,14 @@ mod tests {
             .prepare_function(&complete_fn)
             .expect("Failed to prepare complete");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
 
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -1275,7 +1560,7 @@ mod tests {
         let bst_fn = test_helpers::find_function(&parsed_nodes, "bst");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&lower_bound_fn)
             .expect("Failed to prepare lower_bound");
@@ -1286,14 +1571,14 @@ mod tests {
             .prepare_function(&bst_fn)
             .expect("Failed to prepare bst");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
 
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -1305,16 +1590,16 @@ mod tests {
         let len_fn = test_helpers::find_function(&parsed_nodes, "len");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&len_fn)
             .expect("Failed to prepare len");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
+
+        let axioms = builder.exported_axioms().expect("Failed to export axioms");
 
         // len has both zero (base case) and addition patterns, so domain axiom should be generated
         let domain_axiom = axioms
@@ -1325,7 +1610,9 @@ mod tests {
         assert!(domain_axiom.is_domain_specific());
 
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -1338,16 +1625,16 @@ mod tests {
         let all_eq_fn = test_helpers::find_function(&parsed_nodes, "all_eq");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&all_eq_fn)
             .expect("Failed to prepare all_eq");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
+
+        let axioms = builder.exported_axioms().expect("Failed to export axioms");
 
         // all_eq returns bool, so no domain axiom should be generated
         let domain_axiom_count = axioms.iter().filter(|a| a.is_domain_specific()).count();
@@ -1357,7 +1644,9 @@ mod tests {
         );
 
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -1369,19 +1658,21 @@ mod tests {
         let height_fn = test_helpers::find_function(&parsed_nodes, "height");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&height_fn)
             .expect("Failed to prepare height");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
+
+        let all_axioms = builder
+            .generate_all()
+            .expect("Failed to generate all axioms");
 
         // Find domain axiom
-        let domain_axiom = axioms
+        let domain_axiom = all_axioms
             .iter()
             .find(|a| a.name == "height_geq_0")
             .expect("height function should generate height_geq_0 axiom");
@@ -1394,7 +1685,7 @@ mod tests {
         );
 
         // Find derived lemma
-        let derived_axiom = axioms
+        let derived_axiom = all_axioms
             .iter()
             .find(|a| a.name == "height_impl_ne_negSucc")
             .expect("height should generate derived axiom");
@@ -1408,7 +1699,9 @@ mod tests {
 
         // Validate Lean axioms
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -1420,16 +1713,16 @@ mod tests {
         let len_fn = test_helpers::find_function(&parsed_nodes, "len");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&len_fn)
             .expect("Failed to prepare len");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
+
+        let axioms = builder.exported_axioms().expect("Failed to export axioms");
 
         // Verify _infer axiom exists for len base case
         let infer_axiom = axioms
@@ -1446,7 +1739,9 @@ mod tests {
 
         // Validate through Lean
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -1461,7 +1756,7 @@ mod tests {
         let count_fn = test_helpers::find_function(&parsed_nodes, "count");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
 
-        let mut generator = AxiomGenerator::new(type_constructors);
+        let mut generator = AxiomGenerator::new(type_constructors.clone());
         generator
             .prepare_function(&len_fn)
             .expect("Failed to prepare len");
@@ -1472,11 +1767,11 @@ mod tests {
             .prepare_function(&count_fn)
             .expect("Failed to prepare count");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
+
+        let axioms = builder.exported_axioms().expect("Failed to export axioms");
 
         // Verify _infer axiom exists for each function's base case
         assert!(
@@ -1494,7 +1789,9 @@ mod tests {
 
         // Validate through Lean
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        builder
+            .validate_with_lean(parsed_nodes, &type_constructors)
+            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
@@ -1512,11 +1809,11 @@ mod tests {
             .prepare_function(&all_eq_fn)
             .expect("Failed to prepare all_eq");
 
-        let builder = generator.build_all();
-        let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
+
+        let axioms = builder.exported_axioms().expect("Failed to export axioms");
 
         // Verify _infer axiom is NOT generated (function returns bool, no zero literal)
         let has_all_eq_0_infer = axioms.iter().any(|a| a.name == "all_eq_0_infer");

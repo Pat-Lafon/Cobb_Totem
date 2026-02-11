@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod integration_tests {
     use crate::axiom_generator::AxiomGenerator;
-    use crate::lean_backend::LeanContextBuilder;
-    use crate::lean_validation::validate_lean_code;
     use crate::ocamlparser::OcamlParser;
     use crate::prog_ir::AstNode;
 
@@ -42,45 +40,14 @@ mod integration_tests {
         all_nodes = crate::wrap_all_functions(all_nodes);
 
         // Build all axioms at once
-        let builder = generator.build_all();
-        let all_axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+        let builder = generator.build_all().with_proof(|a| a.suggest_proof_tactic());
 
-        let mut context_builder = LeanContextBuilder::new();
-        for type_decl in type_decls {
-            let theorems = type_decl.generate_complete_lawful_beq();
-            context_builder = context_builder
-                .with_type_theorems(&type_decl.name, theorems)
-                .with_helper_predicates(&type_decl.name);
-        }
-
-        let lean_code = context_builder
-            .with_nodes(all_nodes)
-            .with_axioms(all_axioms)
-            .build();
-
-        validate_lean_code(&lean_code).unwrap_or_else(|e| {
-            eprintln!("Generated Lean code:\n{}", lean_code);
-
-            let error_lines: Vec<&str> = e.lines().collect();
-            let error_preview = if error_lines.len() > 30 {
-                format!(
-                    "Validation error (first 30 lines of {}):\n{}\n... ({} more lines)",
-                    error_lines.len(),
-                    error_lines[..30].join("\n"),
-                    error_lines.len() - 30
-                )
-            } else {
-                e.clone()
-            };
-
-            panic!(
-                "Generated axioms failed Lean validation:\n{}",
-                error_preview
-            )
-        });
+        // Validate through Lean backend
+        builder
+            .validate_with_lean(all_nodes.clone(), &type_decls)
+            .unwrap_or_else(|e| {
+                panic!("Generated axioms failed Lean validation:\n{}", e)
+            });
     }
 
     #[test]

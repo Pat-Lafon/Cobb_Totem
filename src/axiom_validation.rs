@@ -172,6 +172,7 @@ mod tests {
             body,
             proof: None,
             attributes: vec![],
+            is_internal: false,
         };
 
         assert!(
@@ -204,6 +205,7 @@ mod tests {
             body,
             proof: None,
             attributes: vec![],
+            is_internal: false,
         };
 
         axiom

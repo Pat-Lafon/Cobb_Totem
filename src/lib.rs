@@ -113,9 +113,6 @@ pub fn wrap_all_functions(nodes: Vec<AstNode>) -> Vec<AstNode> {
 pub fn generate_and_validate_axioms(
     program_str: &str,
 ) -> Result<(Vec<AstNode>, Vec<spec_ir::Axiom>), Box<dyn std::error::Error>> {
-    use lean_backend::LeanContextBuilder;
-    use lean_validation::validate_lean_code;
-
     let parsed_nodes = OcamlParser::parse_nodes(program_str)?;
 
     let type_decls = parsed_nodes
@@ -145,19 +142,15 @@ pub fn generate_and_validate_axioms(
     }
 
     let parsed_nodes = wrap_all_functions(parsed_nodes);
-    let axioms = generator
+    let builder = generator
         .build_all()
-        .with_proof(|a| a.suggest_proof_tactic())
-        .build()?;
+        .with_proof(|a| a.suggest_proof_tactic());
 
-    let lean_code = LeanContextBuilder::new()
-        .with_nodes(parsed_nodes.clone())
-        .with_axioms(axioms.clone())
-        .with_type_theorems(&type_decl.name, type_decl.generate_complete_lawful_beq())
-        .with_helper_predicates(&type_decl.name)
-        .build();
+    // Validate through Lean backend with all axioms
+    builder.validate_with_lean(parsed_nodes.clone(), &[type_decl])?;
 
-    validate_lean_code(&lean_code)?;
+    // Export the public axioms
+    let axioms = builder.exported_axioms()?;
 
     Ok((parsed_nodes, axioms))
 }
@@ -231,6 +224,7 @@ pub(crate) mod test_helpers {
 
     /// Generate complete axioms with impl and wrapper from a program string and function name
     /// (Convenience wrapper for single-function programs)
+    /// Note: Returns ALL axioms (exported + internal) for validation purposes
     pub(crate) fn generate_axioms_with_wrapper(
         program_str: &str,
         func_name: &str,
@@ -248,11 +242,11 @@ pub(crate) mod test_helpers {
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
 
         // Build axioms with proof tactic
-        let builder = generator.build_all();
+        // Return ALL axioms (exported + internal) so validation has complete context
+        let builder = generator.build_all().with_proof(|a| a.suggest_proof_tactic());
         let axioms = builder
-            .with_proof(|a| a.suggest_proof_tactic())
-            .build()
-            .expect("Failed to generate axioms");
+            .generate_all()
+            .expect("Failed to generate all axioms");
 
         (parsed_nodes, axioms)
     }

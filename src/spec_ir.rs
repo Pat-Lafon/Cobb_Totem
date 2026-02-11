@@ -16,6 +16,8 @@ pub struct Axiom {
     pub body: Proposition,
     pub proof: Option<String>,
     pub attributes: Vec<String>,
+    /// If true, this axiom is only for Lean validation (not exported to OCaml)
+    pub(crate) is_internal: bool,
 }
 
 /// Quantification mode for a parameter
@@ -136,6 +138,30 @@ impl Parameter {
     }
 }
 
+impl From<String> for Expression {
+    fn from(s: String) -> Self {
+        Expression::Variable(VarName::new(&s))
+    }
+}
+
+impl From<&str> for Expression {
+    fn from(s: &str) -> Self {
+        Expression::Variable(VarName::new(s))
+    }
+}
+
+impl From<i32> for Expression {
+    fn from(value: i32) -> Self {
+        Expression::Literal(Literal::Int(value))
+    }
+}
+
+impl From<i64> for Expression {
+    fn from(value: i64) -> Self {
+        Expression::Literal(Literal::Int(value as i32))
+    }
+}
+
 impl Expression {
     /// Check if an expression is a boolean-valued comparison or logical operation
     pub(crate) fn is_boolean_expr(&self) -> bool {
@@ -200,6 +226,17 @@ impl Axiom {
     /// Check if this is a domain-specific axiom (e.g., non-negativity constraint)
     pub fn is_domain_specific(&self) -> bool {
         self.name.ends_with(DOMAIN_AXIOM_SUFFIX)
+    }
+
+    /// Check if this axiom is internal (only for Lean validation, not exported to OCaml)
+    pub fn is_internal(&self) -> bool {
+        self.is_internal
+    }
+
+    /// Mark this axiom as internal (only for Lean validation, not exported to OCaml)
+    pub fn with_internal(mut self, internal: bool) -> Self {
+        self.is_internal = internal;
+        self
     }
 
     /// Count existential quantifiers in the proposition body
@@ -659,6 +696,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -712,6 +750,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build context with automatic BEq theorem attachment using builder pattern
@@ -766,6 +805,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -818,6 +858,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -869,6 +910,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -917,6 +959,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -975,6 +1018,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1039,6 +1083,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1109,6 +1154,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1156,6 +1202,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1214,6 +1261,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1270,6 +1318,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1353,6 +1402,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1436,6 +1486,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1486,6 +1537,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1545,6 +1597,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         // Build the Lean context with prelude definitions and axiom
@@ -1593,6 +1646,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         let display_output = axiom.to_string();
@@ -1654,6 +1708,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
+            is_internal: false,
         };
 
         let display_output = axiom.to_string();
