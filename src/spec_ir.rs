@@ -330,7 +330,10 @@ impl ToLean for Axiom {
             format!("@[{}] ", self.attributes.join(", "))
         };
 
-        format!("{}theorem {} : {} := {}", attrs_str, self.name, theorem_statement, proof)
+        format!(
+            "{}theorem {} : {} := {}",
+            attrs_str, self.name, theorem_statement, proof
+        )
     }
 }
 

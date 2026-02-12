@@ -383,56 +383,54 @@ impl AxiomBuilderState {
                 // Check if the parameter is used in the body
                 match body.as_ref() {
                     Proposition::Implication(antecedent, consequent) => {
-                         let consequent_uses_var = Self::contains_variable(consequent, param_var);
+                        let consequent_uses_var = Self::contains_variable(consequent, param_var);
 
-                         if !consequent_uses_var {
-                             // Variable not used in consequent: push existential down
-                             // Transform: ∃v. A → B  =>  (∃v. A) → B (when v ∉ B)
-                             let wrapped_antecedent = Proposition::Existential(
-                                 param.clone(),
-                                 Box::new(*antecedent.clone()),
-                             );
-                             let new_implication = Proposition::Implication(
-                                 Box::new(wrapped_antecedent),
-                                 consequent.clone(),
-                             );
-                             // Recursively reduce scope in the entire result (both antecedent and consequent)
-                             Self::reduce_existential_scope(&new_implication)
-                         } else if let Proposition::Implication(inner_ant, inner_cons) = consequent.as_ref() {
-                             // Consequent is itself an implication: check if innermost doesn't use var
-                             if !Self::contains_variable(inner_cons, param_var) {
-                                 // Inner consequent doesn't use var
-                                 // Transform: ∃v. A → (B → C) => (∃v. A → B) → C (when v ∉ C)
-                                 let combined_impl = Proposition::Implication(
-                                     antecedent.clone(),
-                                     inner_ant.clone(),
-                                 );
-                                 let wrapped = Proposition::Existential(
-                                     param.clone(),
-                                     Box::new(combined_impl),
-                                 );
-                                 let new_impl = Proposition::Implication(
-                                     Box::new(wrapped),
-                                     inner_cons.clone(),
-                                 );
-                                 // Recursively apply further reductions
-                                 Self::reduce_existential_scope(&new_impl)
-                             } else {
-                                 // Inner consequent also uses var, keep existential wrapping
-                                 Proposition::Existential(
-                                     param.clone(),
-                                     Box::new(Self::reduce_existential_scope(body)),
-                                 )
-                             }
-                         } else {
-                             // Variable is used but consequent isn't an implication
-                             // keep existential wrapping, but recurse into body
-                             Proposition::Existential(
-                                 param.clone(),
-                                 Box::new(Self::reduce_existential_scope(body)),
-                             )
-                         }
-                     }
+                        if !consequent_uses_var {
+                            // Variable not used in consequent: push existential down
+                            // Transform: ∃v. A → B  =>  (∃v. A) → B (when v ∉ B)
+                            let wrapped_antecedent = Proposition::Existential(
+                                param.clone(),
+                                Box::new(*antecedent.clone()),
+                            );
+                            let new_implication = Proposition::Implication(
+                                Box::new(wrapped_antecedent),
+                                consequent.clone(),
+                            );
+                            // Recursively reduce scope in the entire result (both antecedent and consequent)
+                            Self::reduce_existential_scope(&new_implication)
+                        } else if let Proposition::Implication(inner_ant, inner_cons) =
+                            consequent.as_ref()
+                        {
+                            // Consequent is itself an implication: check if innermost doesn't use var
+                            if !Self::contains_variable(inner_cons, param_var) {
+                                // Inner consequent doesn't use var
+                                // Transform: ∃v. A → (B → C) => (∃v. A → B) → C (when v ∉ C)
+                                let combined_impl =
+                                    Proposition::Implication(antecedent.clone(), inner_ant.clone());
+                                let wrapped = Proposition::Existential(
+                                    param.clone(),
+                                    Box::new(combined_impl),
+                                );
+                                let new_impl =
+                                    Proposition::Implication(Box::new(wrapped), inner_cons.clone());
+                                // Recursively apply further reductions
+                                Self::reduce_existential_scope(&new_impl)
+                            } else {
+                                // Inner consequent also uses var, keep existential wrapping
+                                Proposition::Existential(
+                                    param.clone(),
+                                    Box::new(Self::reduce_existential_scope(body)),
+                                )
+                            }
+                        } else {
+                            // Variable is used but consequent isn't an implication
+                            // keep existential wrapping, but recurse into body
+                            Proposition::Existential(
+                                param.clone(),
+                                Box::new(Self::reduce_existential_scope(body)),
+                            )
+                        }
+                    }
                     other => {
                         // Not an implication: keep existential wrapping, recurse into body
                         Proposition::Existential(
@@ -446,10 +444,7 @@ impl AxiomBuilderState {
                 // First reduce the consequent, then check if we can reduce the antecedent further
                 let reduced_consequent = Self::reduce_existential_scope(consequent);
                 let reduced_antecedent = Self::reduce_existential_scope(antecedent);
-                Proposition::Implication(
-                    Box::new(reduced_antecedent),
-                    Box::new(reduced_consequent),
-                )
+                Proposition::Implication(Box::new(reduced_antecedent), Box::new(reduced_consequent))
             }
             other => other.clone(),
         }
@@ -1035,11 +1030,11 @@ impl AxiomBuilderState {
 
 #[cfg(test)]
 mod tests {
-    use crate::ToLean;
-    use crate::test_helpers;
-    use crate::spec_ir::{Expression, Parameter, Proposition};
-    use crate::prog_ir::Type;
     use super::AxiomBuilderState;
+    use crate::ToLean;
+    use crate::prog_ir::Type;
+    use crate::spec_ir::{Expression, Parameter, Proposition};
+    use crate::test_helpers;
 
     /// Helper to create an equality proposition
     fn eq(left: Expression, right: Expression) -> Proposition {
@@ -1061,7 +1056,7 @@ mod tests {
         // doesn't use the variable and restructures accordingly.
         //
         // Input: ∃v. (prop1(v) → (prop2(v) → final_no_v))
-        // 
+        //
         // Transformation:
         // - Consequent (prop2(v) → final_no_v) uses v, but its inner consequent (final_no_v) doesn't
         // - Apply: ∃v. A → (B → C) => (∃v. A → B) → C (when v ∉ C)
@@ -1069,21 +1064,17 @@ mod tests {
         //
         // The scope of v is now reduced to only wrap the portion where it's used.
 
-        let prop1_v = eq("v".into(), 0i64.into());    // v = 0
-        let prop2_v = eq("v".into(), 1i64.into());    // v = 1
+        let prop1_v = eq("v".into(), 0i64.into()); // v = 0
+        let prop2_v = eq("v".into(), 1i64.into()); // v = 1
         let final_no_v = eq("x".into(), 2i64.into()); // x = 2 (no v)
 
         // innermost implication: prop2(v) → final_no_v
-        let inner_impl = Proposition::Implication(
-            Box::new(prop2_v.clone()),
-            Box::new(final_no_v.clone()),
-        );
+        let inner_impl =
+            Proposition::Implication(Box::new(prop2_v.clone()), Box::new(final_no_v.clone()));
 
         // outer implication: prop1(v) → (prop2(v) → final_no_v)
-        let outer_impl = Proposition::Implication(
-            Box::new(prop1_v.clone()),
-            Box::new(inner_impl.clone()),
-        );
+        let outer_impl =
+            Proposition::Implication(Box::new(prop1_v.clone()), Box::new(inner_impl.clone()));
 
         // wrap with existential: ∃v. prop1(v) → (prop2(v) → final_no_v)
         let original = Proposition::Existential(
@@ -1095,22 +1086,19 @@ mod tests {
 
         // After reduction: (∃v. prop1(v) → prop2(v)) → final_no_v
         // The existential has been pulled out and repositioned to wrap only the part where v is used
-        
+
         // Expected structure
-        let combined_impl = Proposition::Implication(
-            Box::new(prop1_v),
-            Box::new(prop2_v),
-        );
+        let combined_impl = Proposition::Implication(Box::new(prop1_v), Box::new(prop2_v));
         let existential_ant = Proposition::Existential(
             Box::new(Parameter::existential("v", Type::Int)),
             Box::new(combined_impl),
         );
-        let expected = Proposition::Implication(
-            Box::new(existential_ant),
-            Box::new(final_no_v),
+        let expected = Proposition::Implication(Box::new(existential_ant), Box::new(final_no_v));
+
+        assert_eq!(
+            reduced, expected,
+            "Existential should be hoisted out of final_no_v"
         );
-        
-        assert_eq!(reduced, expected, "Existential should be hoisted out of final_no_v");
     }
 
     #[test]
@@ -1136,14 +1124,15 @@ mod tests {
         // Expected: (∃u. prop(u)) → final (u moved to antecedent only)
         let prop_u = eq("u".into(), 0i64.into());
         let final_prop = eq("x".into(), 1i64.into());
-        let implication = Proposition::Implication(Box::new(prop_u.clone()), Box::new(final_prop.clone()));
+        let implication =
+            Proposition::Implication(Box::new(prop_u.clone()), Box::new(final_prop.clone()));
         let original = Proposition::Existential(
             Box::new(Parameter::existential("u", Type::Int)),
             Box::new(implication),
         );
 
         let reduced = AxiomBuilderState::reduce_existential_scope(&original);
-        
+
         // Build expected: (∃u. prop(u)) → final
         let existential_ant = Proposition::Existential(
             Box::new(Parameter::existential("u", Type::Int)),

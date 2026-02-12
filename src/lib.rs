@@ -243,7 +243,9 @@ pub(crate) mod test_helpers {
 
         // Build axioms with proof tactic
         // Return ALL axioms (exported + internal) so validation has complete context
-        let builder = generator.build_all().with_proof(|a| a.suggest_proof_tactic());
+        let builder = generator
+            .build_all()
+            .with_proof(|a| a.suggest_proof_tactic());
         let axioms = builder
             .generate_all()
             .expect("Failed to generate all axioms");
