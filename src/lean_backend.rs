@@ -29,14 +29,24 @@ impl ToLean for LetBinding {
             format!("@[{}]\n", self.attributes.join(", "))
         };
 
+        let termination_str = if let Some((term_by, decr_by)) = &self.termination_proof {
+            format!(
+                "\n  termination_by {}\n  decreasing_by\n    {}",
+                term_by, decr_by
+            )
+        } else {
+            String::new()
+        };
+
         format!(
-            "{}{} {} {}{} := {}",
+            "{}{} {} {}{} := {}{}",
             attrs_str,
             def_keyword,
             self.name,
             params_str,
             return_type_str,
-            self.body.to_lean()
+            self.body.to_lean(),
+            termination_str
         )
     }
 }
@@ -362,6 +372,7 @@ mod tests {
             return_type: Some(Type::Int),
             body: Expression::Variable("x".into()),
             attributes: vec!["simp".to_string()],
+            termination_proof: None,
         };
 
         let lean_code = func.to_lean();
@@ -379,6 +390,7 @@ mod tests {
             return_type: Some(Type::Bool),
             body: Expression::Variable("y".into()),
             attributes: vec!["simp".to_string(), "grind".to_string()],
+            termination_proof: None,
         };
 
         let lean_code = func.to_lean();

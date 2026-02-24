@@ -860,6 +860,10 @@ pub struct LetBinding {
     pub params: Vec<(VarName, Type)>,
     pub return_type: Option<Type>,
     pub body: Expression,
+    /// Optional termination proof for recursive functions with Int parameters
+    /// Format: (termination_by_clause, decreasing_by_clause)
+    /// Example: ("x.natAbs", "all_goals grind")
+    pub termination_proof: Option<(String, String)>,
 }
 
 impl fmt::Display for LetBinding {
@@ -995,6 +999,7 @@ mod tests {
                     ),
                 ],
             ),
+            termination_proof: None,
         });
 
         assert_eq!(nodes[0], expected);

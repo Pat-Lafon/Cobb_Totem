@@ -521,6 +521,7 @@ impl OcamlParser {
             params,
             return_type,
             body,
+            termination_proof: None,
         }
     }
 
@@ -1415,6 +1416,7 @@ mod tests {
                 .collect(),
             return_type,
             body,
+            termination_proof: None,
         })
     }
 
@@ -1435,6 +1437,7 @@ mod tests {
                 .collect(),
             return_type,
             body,
+            termination_proof: None,
         })
     }
 
@@ -1723,6 +1726,7 @@ mod tests {
                         (Pattern::Wildcard, Expression::Literal(Literal::Bool(false))),
                     ],
                 ),
+                termination_proof: None,
             })],
         );
     }
@@ -1796,6 +1800,7 @@ mod tests {
                         ),
                     ],
                 ),
+                termination_proof: None,
             }),
         ];
 
@@ -1968,6 +1973,7 @@ mod tests {
                     ),
                 ],
             ),
+            termination_proof: None,
         })];
         assert_parse(source, expected);
     }
@@ -1993,6 +1999,7 @@ mod tests {
                     ),
                 )],
             ),
+            termination_proof: None,
         })];
 
         assert_parse(source, expected);
@@ -2024,6 +2031,7 @@ mod tests {
                     (Pattern::Wildcard, Expression::Literal(Literal::Bool(false))),
                 ],
             ),
+            termination_proof: None,
         })];
 
         assert_parse(source, expected);
@@ -2049,6 +2057,7 @@ mod tests {
                     (Pattern::Wildcard, Expression::Literal(Literal::Bool(false))),
                 ],
             ),
+            termination_proof: None,
         })];
 
         assert_parse(source, expected);
@@ -2065,6 +2074,7 @@ mod tests {
                 params: vec![(VarName::new("x"), Type::Int)],
                 return_type: Some(Type::Bool),
                 body: Expression::Literal(Literal::Bool(true)),
+                termination_proof: None,
             })],
         );
     }
@@ -2080,6 +2090,7 @@ mod tests {
                 params: vec![(VarName::new("x"), Type::Int)],
                 return_type: Some(Type::Bool),
                 body: Expression::Literal(Literal::Bool(true)),
+                termination_proof: None,
             })],
         );
     }
@@ -2176,6 +2187,7 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
                         ),
                     ],
                 ),
+                termination_proof: None,
             }),
         ];
 
@@ -2279,6 +2291,7 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
                     then_branch: Box::new(Expression::Literal(Literal::Int(0))),
                     else_branch: Box::new(Expression::Variable("x".into())),
                 },
+                termination_proof: None,
             })],
         );
     }

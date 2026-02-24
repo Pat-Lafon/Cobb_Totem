@@ -59,8 +59,8 @@ pub enum Proposition {
     /// Equality: p #== q
     Equality(Box<Proposition>, Box<Proposition>),
 
-    /// Conjunction: p && q
-    And(Box<Proposition>, Box<Proposition>),
+    /// Conjunction: p && q && ...
+    And(Vec<Proposition>),
 
     /// Disjunction: p || q
     Or(Box<Proposition>, Box<Proposition>),
@@ -244,12 +244,12 @@ impl Axiom {
         match prop {
             Proposition::Existential(_, body) => 1 + Self::count_existentials_in_body(body),
             Proposition::Implication(p, q)
-            | Proposition::And(p, q)
             | Proposition::Or(p, q)
             | Proposition::Iff(p, q)
             | Proposition::Equality(p, q) => {
                 Self::count_existentials_in_body(p) + Self::count_existentials_in_body(q)
             }
+            Proposition::And(props) => props.iter().map(Self::count_existentials_in_body).sum(),
             Proposition::Not(p) => Self::count_existentials_in_body(p),
             _ => 0,
         }
@@ -267,7 +267,7 @@ impl Axiom {
             let cases_param = self
                 .params
                 .iter()
-                .find(|p| matches!(p.typ, Type::Named(_)))
+                .find(|p| matches!(p.typ, Type::Named(_) | Type::Int))
                 .map(|p| p.name.0.clone())
                 .expect("Axioms with existentials must have a named/inductive type parameter");
 
@@ -413,8 +413,8 @@ impl Proposition {
             Proposition::Implication(p, q) => {
                 Proposition::Implication(Box::new((*p).map(f)), Box::new((*q).map(f)))
             }
-            Proposition::And(p, q) => {
-                Proposition::And(Box::new((*p).map(f)), Box::new((*q).map(f)))
+            Proposition::And(props) => {
+                Proposition::And(props.into_iter().map(|p| p.map(f)).collect())
             }
             Proposition::Or(p, q) => Proposition::Or(Box::new((*p).map(f)), Box::new((*q).map(f))),
             Proposition::Not(p) => Proposition::Not(Box::new((*p).map(f))),
@@ -441,10 +441,7 @@ impl Proposition {
                 let t = p.fold(init, f);
                 q.fold(t, f)
             }
-            Proposition::And(p, q) => {
-                let t = p.fold(init, f);
-                q.fold(t, f)
-            }
+            Proposition::And(props) => props.iter().fold(init, |t, p| p.fold(t, f)),
             Proposition::Or(p, q) => {
                 let t = p.fold(init, f);
                 q.fold(t, f)
@@ -458,6 +455,86 @@ impl Proposition {
             _ => init,
         };
         f(t, self)
+    }
+
+    /// Collect all variable references that appear in this proposition.
+    /// Includes variables in expressions, predicate arguments, and existential binders.
+    pub(crate) fn collect_variables(&self) -> std::collections::HashSet<VarName> {
+        self.fold(std::collections::HashSet::new(), &|mut vars, prop| {
+            match prop {
+                Proposition::Expr(expr) => {
+                    vars = expr.fold(vars, &|mut vars, e| {
+                        if let Expression::Variable(v) = e {
+                            vars.insert(v.clone());
+                        }
+                        vars
+                    });
+                    vars
+                }
+                Proposition::Predicate(_, args) => {
+                    for arg in args {
+                        vars = arg.fold(vars, &|mut vars, e| {
+                            if let Expression::Variable(v) = e {
+                                vars.insert(v.clone());
+                            }
+                            vars
+                        });
+                    }
+                    vars
+                }
+                Proposition::Existential(param, _) => {
+                    vars.insert(param.name.clone());
+                    vars
+                }
+                _ => vars,
+            }
+        })
+    }
+
+    /// Collect all existentially-bound variables in this proposition.
+    /// These are variables introduced by existential quantifiers.
+    pub(crate) fn collect_existential_variables(&self) -> std::collections::HashSet<VarName> {
+        self.fold(std::collections::HashSet::new(), &|mut vars, prop| {
+            if let Proposition::Existential(param, _) = prop {
+                vars.insert(param.name.clone());
+            }
+            vars
+        })
+    }
+
+    /// Extract the other side of an equality if this is an equality with a variable.
+    /// Handles both `var = expr` and `expr = var` forms.
+    /// Returns `Some(expr)` if the variable is found on exactly one side, `None` otherwise.
+    pub(crate) fn extract_equality_other_side_for_var(
+        &self,
+        var: &VarName,
+    ) -> Option<&Expression> {
+        match self {
+            Proposition::Expr(Expression::BinaryOp(lhs, crate::prog_ir::BinaryOp::Eq, rhs)) => {
+                let lhs_var_set = lhs.fold(std::collections::HashSet::new(), &|mut vars, e| {
+                    if let Expression::Variable(v) = e {
+                        vars.insert(v.clone());
+                    }
+                    vars
+                });
+                let rhs_var_set = rhs.fold(std::collections::HashSet::new(), &|mut vars, e| {
+                    if let Expression::Variable(v) = e {
+                        vars.insert(v.clone());
+                    }
+                    vars
+                });
+
+                let lhs_has_var = lhs_var_set.contains(var);
+                let rhs_has_var = rhs_var_set.contains(var);
+
+                match (lhs_has_var, rhs_has_var) {
+                    (true, false) => Some(rhs),
+                    (false, true) => Some(lhs),
+                    _ => None,
+                }
+            }
+            _ => None,
+        }
     }
 }
 
@@ -474,8 +551,18 @@ impl fmt::Display for Proposition {
             Proposition::Equality(p, q) => {
                 write!(f, "({})#==({})", p, q)
             }
-            Proposition::And(p, q) => {
-                write!(f, "({} && {})", p, q)
+            Proposition::And(props) => {
+                if props.len() == 1 {
+                    // Single element: just display it without extra wrapping
+                    write!(f, "{}", props[0])
+                } else {
+                    let formatted = props
+                        .iter()
+                        .map(|p| format!("{}", p))
+                        .collect::<Vec<_>>()
+                        .join(" && ");
+                    write!(f, "({})", formatted)
+                }
             }
             Proposition::Or(p, q) => {
                 write!(f, "({} || {})", p, q)
@@ -508,8 +595,18 @@ impl ToLean for Proposition {
             Proposition::Equality(p, q) => {
                 format!("{} = {}", p.to_lean(), q.to_lean())
             }
-            Proposition::And(p, q) => {
-                format!("({} ∧ {})", p.to_lean(), q.to_lean())
+            Proposition::And(props) => {
+                if props.len() == 1 {
+                    // Single element: just display it without extra wrapping
+                    props[0].to_lean()
+                } else {
+                    let formatted = props
+                        .iter()
+                        .map(|p| p.to_lean())
+                        .collect::<Vec<_>>()
+                        .join(" ∧ ");
+                    format!("({})", formatted)
+                }
             }
             Proposition::Or(p, q) => {
                 format!("({} ∨ {})", p.to_lean(), q.to_lean())
@@ -1000,20 +1097,20 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 Parameter::universal("n", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
-                Box::new(Proposition::And(
-                    Box::new(Proposition::Predicate(
+                Box::new(Proposition::And(vec![
+                    Proposition::Predicate(
                         "len".to_string(),
                         vec![
                             Expression::Variable("l".into()),
                             Expression::Variable("n".into()),
                         ],
-                    )),
-                    Box::new(Proposition::Expr(Expression::BinaryOp(
+                    ),
+                    Proposition::Expr(Expression::BinaryOp(
                         Box::new(Expression::Variable("n".into())),
                         BinaryOp::Gt,
                         Box::new(Expression::Literal(Literal::Int(0))),
-                    ))),
-                )),
+                    )),
+                ])),
                 Box::new(Proposition::Not(Box::new(Proposition::Predicate(
                     "is_nil".to_string(),
                     vec![Expression::Variable("l".into())],
@@ -1056,22 +1153,22 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 Parameter::universal("n", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
-                Box::new(Proposition::And(
-                    Box::new(Proposition::Predicate(
+                Box::new(Proposition::And(vec![
+                    Proposition::Predicate(
                         "tl".to_string(),
                         vec![
                             Expression::Variable("l".into()),
                             Expression::Variable("l1".into()),
                         ],
-                    )),
-                    Box::new(Proposition::Predicate(
+                    ),
+                    Proposition::Predicate(
                         "len".to_string(),
                         vec![
                             Expression::Variable("l1".into()),
                             Expression::Variable("n".into()),
                         ],
-                    )),
-                )),
+                    ),
+                ])),
                 Box::new(Proposition::Predicate(
                     "len".to_string(),
                     vec![
@@ -1127,15 +1224,15 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 Parameter::universal("n", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
-                Box::new(Proposition::And(
-                    Box::new(Proposition::Predicate(
+                Box::new(Proposition::And(vec![
+                    Proposition::Predicate(
                         "tl".to_string(),
                         vec![
                             Expression::Variable("l".into()),
                             Expression::Variable("l1".into()),
                         ],
-                    )),
-                    Box::new(Proposition::Predicate(
+                    ),
+                    Proposition::Predicate(
                         "len".to_string(),
                         vec![
                             Expression::Variable("l".into()),
@@ -1145,8 +1242,8 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                                 Box::new(Expression::Literal(Literal::Int(1))),
                             ),
                         ],
-                    )),
-                )),
+                    ),
+                ])),
                 Box::new(Proposition::Predicate(
                     "len".to_string(),
                     vec![
@@ -1301,19 +1398,19 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 Parameter::universal("l1", Type::Named("ilist".to_string())),
             ],
             body: Proposition::Implication(
-                Box::new(Proposition::And(
-                    Box::new(Proposition::Predicate(
+                Box::new(Proposition::And(vec![
+                    Proposition::Predicate(
                         "tl".to_string(),
                         vec![
                             Expression::Variable("l".into()),
                             Expression::Variable("l1".into()),
                         ],
-                    )),
-                    Box::new(Proposition::Predicate(
+                    ),
+                    Proposition::Predicate(
                         "sorted".to_string(),
                         vec![Expression::Variable("l".into())],
-                    )),
-                )),
+                    ),
+                ])),
                 Box::new(Proposition::Predicate(
                     "sorted".to_string(),
                     vec![Expression::Variable("l1".into())],
@@ -1360,41 +1457,41 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 Parameter::universal("y", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
-                Box::new(Proposition::And(
-                    Box::new(Proposition::Predicate(
+                Box::new(Proposition::And(vec![
+                    Proposition::Predicate(
                         "tl".to_string(),
                         vec![
                             Expression::Variable("l".into()),
                             Expression::Variable("l1".into()),
                         ],
-                    )),
-                    Box::new(Proposition::Predicate(
+                    ),
+                    Proposition::Predicate(
                         "sorted".to_string(),
                         vec![Expression::Variable("l".into())],
-                    )),
-                )),
+                    ),
+                ])),
                 Box::new(Proposition::Or(
                     Box::new(Proposition::Predicate(
                         "is_nil".to_string(),
                         vec![Expression::Variable("l1".into())],
                     )),
                     Box::new(Proposition::Implication(
-                        Box::new(Proposition::And(
-                            Box::new(Proposition::Predicate(
+                        Box::new(Proposition::And(vec![
+                            Proposition::Predicate(
                                 "hd".to_string(),
                                 vec![
                                     Expression::Variable("l1".into()),
                                     Expression::Variable("y".into()),
                                 ],
-                            )),
-                            Box::new(Proposition::Predicate(
+                            ),
+                            Proposition::Predicate(
                                 "hd".to_string(),
                                 vec![
                                     Expression::Variable("l".into()),
                                     Expression::Variable("x".into()),
                                 ],
-                            )),
-                        )),
+                            ),
+                        ])),
                         Box::new(Proposition::Expr(Expression::BinaryOp(
                             Box::new(Expression::Variable("x".into())),
                             BinaryOp::Lte,
@@ -1444,44 +1541,38 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 Parameter::universal("y", Type::Named("Int".to_string())),
             ],
             body: Proposition::Implication(
-                Box::new(Proposition::And(
-                    Box::new(Proposition::Predicate(
+                Box::new(Proposition::And(vec![
+                    Proposition::Predicate(
                         "tl".to_string(),
                         vec![
                             Expression::Variable("l".into()),
                             Expression::Variable("l1".into()),
                         ],
+                    ),
+                    Proposition::Predicate(
+                        "sorted".to_string(),
+                        vec![Expression::Variable("l1".into())],
+                    ),
+                    Proposition::Predicate(
+                        "hd".to_string(),
+                        vec![
+                            Expression::Variable("l".into()),
+                            Expression::Variable("y".into()),
+                        ],
+                    ),
+                    Proposition::Predicate(
+                        "hd".to_string(),
+                        vec![
+                            Expression::Variable("l1".into()),
+                            Expression::Variable("x".into()),
+                        ],
+                    ),
+                    Proposition::Expr(Expression::BinaryOp(
+                        Box::new(Expression::Variable("y".into())),
+                        BinaryOp::Lte,
+                        Box::new(Expression::Variable("x".into())),
                     )),
-                    Box::new(Proposition::And(
-                        Box::new(Proposition::Predicate(
-                            "sorted".to_string(),
-                            vec![Expression::Variable("l1".into())],
-                        )),
-                        Box::new(Proposition::And(
-                            Box::new(Proposition::Predicate(
-                                "hd".to_string(),
-                                vec![
-                                    Expression::Variable("l".into()),
-                                    Expression::Variable("y".into()),
-                                ],
-                            )),
-                            Box::new(Proposition::And(
-                                Box::new(Proposition::Predicate(
-                                    "hd".to_string(),
-                                    vec![
-                                        Expression::Variable("l1".into()),
-                                        Expression::Variable("x".into()),
-                                    ],
-                                )),
-                                Box::new(Proposition::Expr(Expression::BinaryOp(
-                                    Box::new(Expression::Variable("y".into())),
-                                    BinaryOp::Lte,
-                                    Box::new(Expression::Variable("x".into())),
-                                ))),
-                            )),
-                        )),
-                    )),
-                )),
+                ])),
                 Box::new(Proposition::Predicate(
                     "sorted".to_string(),
                     vec![Expression::Variable("l".into())],
@@ -1669,45 +1760,41 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
                 Parameter::existential("n", Type::Named("int".to_string())),
             ],
             body: Proposition::Or(
-                Box::new(Proposition::And(
-                    Box::new(Proposition::And(
-                        Box::new(Proposition::Predicate(
-                            "depth".to_string(),
-                            vec![
-                                Expression::Variable("l".into()),
-                                Expression::Variable("n".into()),
-                            ],
-                        )),
-                        Box::new(Proposition::Equality(
-                            Box::new(Proposition::Expr(Expression::Variable("n".into()))),
-                            Box::new(Proposition::Expr(Expression::Literal(Literal::Int(0)))),
-                        )),
-                    )),
-                    Box::new(Proposition::Predicate(
+                Box::new(Proposition::And(vec![
+                    Proposition::Predicate(
+                        "depth".to_string(),
+                        vec![
+                            Expression::Variable("l".into()),
+                            Expression::Variable("n".into()),
+                        ],
+                    ),
+                    Proposition::Equality(
+                        Box::new(Proposition::Expr(Expression::Variable("n".into()))),
+                        Box::new(Proposition::Expr(Expression::Literal(Literal::Int(0)))),
+                    ),
+                    Proposition::Predicate(
                         "leaf".to_string(),
                         vec![Expression::Variable("l".into())],
+                    ),
+                ])),
+                Box::new(Proposition::And(vec![
+                    Proposition::Predicate(
+                        "depth".to_string(),
+                        vec![
+                            Expression::Variable("l".into()),
+                            Expression::Variable("n".into()),
+                        ],
+                    ),
+                    Proposition::Expr(Expression::BinaryOp(
+                        Box::new(Expression::Variable("n".into())),
+                        BinaryOp::Gt,
+                        Box::new(Expression::Literal(Literal::Int(0))),
                     )),
-                )),
-                Box::new(Proposition::And(
-                    Box::new(Proposition::And(
-                        Box::new(Proposition::Predicate(
-                            "depth".to_string(),
-                            vec![
-                                Expression::Variable("l".into()),
-                                Expression::Variable("n".into()),
-                            ],
-                        )),
-                        Box::new(Proposition::Expr(Expression::BinaryOp(
-                            Box::new(Expression::Variable("n".into())),
-                            BinaryOp::Gt,
-                            Box::new(Expression::Literal(Literal::Int(0))),
-                        ))),
-                    )),
-                    Box::new(Proposition::Not(Box::new(Proposition::Predicate(
+                    Proposition::Not(Box::new(Proposition::Predicate(
                         "leaf".to_string(),
                         vec![Expression::Variable("l".into())],
-                    )))),
-                )),
+                    ))),
+                ])),
             ),
             proof: Some("grind".to_string()),
             attributes: vec![],
@@ -1717,7 +1804,7 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
         let display_output = axiom.to_string();
         assert_eq!(
             display_output,
-            "let[@axiom] tree_leaf_depth_0_disjoint (l : tree) ((n [@exists]) : int) = ((((depth l n) && (n)#==(0)) && (leaf l)) || (((depth l n) && (n > 0)) && (not ((leaf l)))))"
+            "let[@axiom] tree_leaf_depth_0_disjoint (l : tree) ((n [@exists]) : int) = (((depth l n) && (n)#==(0) && (leaf l)) || ((depth l n) && (n > 0) && (not ((leaf l)))))"
         );
     }
 }

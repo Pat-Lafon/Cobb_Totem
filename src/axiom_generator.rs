@@ -71,6 +71,20 @@ impl AxiomGenerator {
         false
     }
 
+    /// Wrap an expression as an equality with RESULT_PARAM if not already wrapped
+    fn wrap_result_equality(&self, prop: &Proposition) -> Proposition {
+        if Self::is_result_equality(prop) {
+            prop.clone()
+        } else {
+            let expr = prop.as_expr();
+            Proposition::Expr(Expression::BinaryOp(
+                Box::new(expr.clone()),
+                crate::prog_ir::BinaryOp::Eq,
+                Box::new(Expression::Variable(RESULT_PARAM.into())),
+            ))
+        }
+    }
+
     #[cfg(test)]
     /// Get the prepared functions and their body propositions (test only)
     pub(crate) fn get_prepared(&self) -> &[(LetBinding, Vec<BodyPropositionData>)] {
@@ -99,6 +113,7 @@ impl AxiomGenerator {
     /// Extract a single expression from results with validation.
     /// Ensures exactly one result, one expression step, and no additional parameters.
     fn extract_single_expr(results: Vec<BodyPropositionData>) -> Result<Expression, String> {
+        // Validate result count
         if results.len() != 1 {
             return Err(format!(
                 "Expected exactly one result, got {}",
@@ -106,28 +121,32 @@ impl AxiomGenerator {
             ));
         }
         let body_data = results.into_iter().next().unwrap();
-        let total_steps = body_data.pattern_constraints.len() + body_data.body_steps.len();
-        if total_steps != 1 {
+
+        // Validate no input constraints and no additional parameters
+        if !body_data.input_constraints.is_empty() {
             return Err(format!(
-                "Expected exactly one proposition step, got {}",
-                total_steps
+                "Expected no input constraints, got {}",
+                body_data.input_constraints.len()
             ));
         }
         if !body_data.additional_parameters.is_empty() {
             return Err(format!(
-                "Expected no additional universals, got {}",
+                "Expected no additional parameters, got {}",
                 body_data.additional_parameters.len()
             ));
         }
-        // Pattern constraints should never appear here - extract_single_expr is for simple expressions only
-        if !body_data.pattern_constraints.is_empty() {
-            return Err(
-                "Expected no pattern constraints for simple expression extraction".to_string(),
-            );
+
+        // Validate exactly one body step and extract expression
+        if body_data.body_steps.len() != 1 {
+            return Err(format!(
+                "Expected exactly one body step, got {}",
+                body_data.body_steps.len()
+            ));
         }
+
         match &body_data.body_steps[0] {
             Proposition::Expr(e) => Ok(e.clone()),
-            _ => Err("Expected proposition step to be an expression".to_string()),
+            _ => Err("Expected body step to be an expression".to_string()),
         }
     }
 
@@ -152,12 +171,10 @@ impl AxiomGenerator {
                 let mut all_params = Vec::new();
 
                 for body_data in combination {
-                    let mut all_body_steps = body_data.pattern_constraints.clone();
-                    all_body_steps.extend(body_data.body_steps.clone());
-
-                    let (last_prop, preceding) = all_body_steps
-                        .split_last()
-                        .ok_or("Expected at least one proposition step")?;
+                    let (last_prop, preceding) = Self::combine_all_steps(
+                        &body_data.input_constraints,
+                        &body_data.body_steps,
+                    )?;
 
                     let expr = match last_prop {
                         Proposition::Expr(e) => e.clone(),
@@ -178,6 +195,22 @@ impl AxiomGenerator {
             .collect()
     }
 
+    /// Combine input constraints and body steps, extracting the final step
+    fn combine_all_steps(
+        input_constraints: &[Proposition],
+        body_steps: &[Proposition],
+    ) -> Result<(Proposition, Vec<Proposition>), String> {
+        let mut all_steps = Vec::with_capacity(input_constraints.len() + body_steps.len());
+        all_steps.extend_from_slice(input_constraints);
+        all_steps.extend_from_slice(body_steps);
+
+        let (last_prop, preceding) = all_steps
+            .split_last()
+            .ok_or("Expected at least one proposition step")?;
+
+        Ok((last_prop.clone(), preceding.to_vec()))
+    }
+
     /// Convert a pattern to a predicate-based proposition
     /// For Nil: generates `is_nil l`
     /// For Cons(x, xs): generates `((is_cons l) && ((head l) == x)) && ((tail l) == xs)`
@@ -196,52 +229,66 @@ impl AxiomGenerator {
                 ))
             }
             crate::prog_ir::Pattern::Wildcard => {
-                panic!()
+                panic!(
+                    "Wildcard patterns must be handled before calling pattern_to_predicate_proposition"
+                )
             }
             crate::prog_ir::Pattern::Variable(_) => {
-                panic!()
+                panic!(
+                    "Variable patterns must be handled before calling pattern_to_predicate_proposition"
+                )
             }
             crate::prog_ir::Pattern::Constructor(constructor_name, nested_patterns) => {
-                // For constructors, generate predicate-based expressions
                 let is_cons_pred = Proposition::Predicate(
                     format!("is_{}", constructor_name.get_simple_name().to_lowercase()),
                     vec![scrutinee.clone()],
                 );
 
-                // Build field constraints using the actual field names from the type declaration
-                let mut field_constraints = vec![];
-                for (field_index, nested_pattern) in nested_patterns.iter().enumerate() {
-                    // Now match the pattern against this field
-                    if let Some(field_constraint) = self.pattern_to_field_equality(
-                        scrutinee,
-                        constructor_name,
-                        field_index,
-                        nested_pattern,
-                    ) {
-                        field_constraints.push(field_constraint);
-                    }
-                }
+                // Build field constraints and combine with constructor predicate
+                let field_constraints = nested_patterns
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(field_index, nested_pattern)| {
+                        self.pattern_to_field_equality(
+                            scrutinee,
+                            constructor_name,
+                            field_index,
+                            nested_pattern,
+                        )
+                    })
+                    .collect::<Vec<_>>();
 
-                // Combine: (is_cons l) && (field_constraint_0) && (field_constraint_1) && ...
-                // For nullary constructors, field_constraints is empty, so result is just the predicate
-                let mut result = is_cons_pred;
-                for constraint in field_constraints {
-                    result = Proposition::And(Box::new(result), Box::new(constraint));
-                }
-                result
+                // Combine all constraints with AND
+                self.combine_constraints(is_cons_pred, field_constraints)
             }
             crate::prog_ir::Pattern::Tuple(patterns) => {
-                // For tuple patterns, generate constraints for each element
-                let mut result = Proposition::Predicate("true".to_string(), vec![]);
-                for (index, pat) in patterns.iter().enumerate() {
-                    // Generate tuple element accessor
-                    let elem_expr = Expression::Variable(VarName(format!("_tuple_elem_{}", index)));
-                    let elem_constraint = self.pattern_to_predicate_proposition(&elem_expr, pat);
-                    result = Proposition::And(Box::new(result), Box::new(elem_constraint));
-                }
-                result
+                let elem_constraints = patterns
+                    .iter()
+                    .enumerate()
+                    .map(|(index, pat)| {
+                        let elem_expr =
+                            Expression::Variable(VarName(format!("_tuple_elem_{}", index)));
+                        self.pattern_to_predicate_proposition(&elem_expr, pat)
+                    })
+                    .collect::<Vec<_>>();
+
+                self.combine_constraints(
+                    Proposition::Predicate("true".to_string(), vec![]),
+                    elem_constraints,
+                )
             }
         }
+    }
+
+    /// Combine multiple constraints into a single AND proposition
+    fn combine_constraints(
+        &self,
+        initial: Proposition,
+        constraints: Vec<Proposition>,
+    ) -> Proposition {
+        let mut all_props = vec![initial];
+        all_props.extend(constraints);
+        Proposition::And(all_props)
     }
 
     /// Generate a field equality constraint for a constructor field
@@ -340,6 +387,52 @@ impl AxiomGenerator {
         }
     }
 
+    /// Analyze both branches of an if-then-else expression
+    /// Extracts the condition and processes both true and false branches
+    fn analyze_ite_branches(
+        &mut self,
+        condition_body_data: &BodyPropositionData,
+        then_branch: &crate::prog_ir::Expression,
+        else_branch: &crate::prog_ir::Expression,
+        cache: &mut HashMap<ApplicationKey, VarName>,
+    ) -> Vec<BodyPropositionData> {
+        let (last_cond, preceding_conds) = condition_body_data
+            .body_steps
+            .split_last()
+            .unwrap_or_else(|| panic!("Expected at least one condition step"));
+        let condition_expr = last_cond.as_expr().clone();
+
+        let mut results = Vec::new();
+        for (is_true, branch) in [(true, then_branch), (false, else_branch)] {
+            let mut branch_cache = cache.clone();
+            let branch_results = self.analyze_expression(branch, &mut branch_cache);
+
+            for branch_body_data in branch_results {
+                let mut input_constraints = condition_body_data.input_constraints.clone();
+                input_constraints.extend(preceding_conds.to_vec());
+
+                // Add the guard condition (or its negation for false branch)
+                let condition_prop = if is_true {
+                    Proposition::Expr(condition_expr.clone())
+                } else {
+                    Proposition::Not(Box::new(Proposition::Expr(condition_expr.clone())))
+                };
+                input_constraints.push(condition_prop);
+                input_constraints.extend(branch_body_data.input_constraints.clone());
+
+                let mut params = condition_body_data.additional_parameters.clone();
+                params.extend(branch_body_data.additional_parameters);
+
+                results.push(BodyPropositionData {
+                    input_constraints,
+                    body_steps: branch_body_data.body_steps,
+                    additional_parameters: params,
+                });
+            }
+        }
+        results
+    }
+
     /// Prepare a function for batch axiom generation
     pub fn prepare_function(&mut self, binding: &LetBinding) -> Result<(), String> {
         // Validate that binding has a return type annotation
@@ -355,9 +448,33 @@ impl AxiomGenerator {
 
         // Create a fresh cache for this axiom's analysis
         let mut cache = HashMap::new();
-        let body_propositions = self.analyze_expression(&binding.body, &mut cache);
+        let mut body_propositions = self.analyze_expression(&binding.body, &mut cache);
+
+        // Wrap final results with = RESULT_PARAM at the function body level
+        body_propositions = body_propositions
+            .into_iter()
+            .map(|body_prop| self.wrap_body_proposition_steps(body_prop))
+            .collect();
+
         self.prepared.push((binding.clone(), body_propositions));
         Ok(())
+    }
+
+    /// Wrap the final body step with = RESULT_PARAM if not already wrapped
+    fn wrap_body_proposition_steps(
+        &self,
+        mut body_prop: BodyPropositionData,
+    ) -> BodyPropositionData {
+        if !body_prop.body_steps.is_empty() {
+            let last_prop = body_prop.body_steps.last().unwrap().clone();
+            if !Self::is_result_equality(&last_prop) {
+                body_prop.body_steps.pop();
+                body_prop
+                    .body_steps
+                    .push(self.wrap_result_equality(&last_prop));
+            }
+        }
+        body_prop
     }
 
     /// Analyze expressions, building propositions
@@ -368,7 +485,7 @@ impl AxiomGenerator {
     ) -> Vec<BodyPropositionData> {
         match body {
             crate::prog_ir::Expression::Variable(var_name) => vec![BodyPropositionData {
-                pattern_constraints: vec![],
+                input_constraints: vec![],
                 body_steps: vec![Proposition::Expr(Expression::Variable(var_name.clone()))],
                 additional_parameters: vec![],
             }],
@@ -381,7 +498,7 @@ impl AxiomGenerator {
                     })
                     .collect();
                 vec![BodyPropositionData {
-                    pattern_constraints: vec![],
+                    input_constraints: vec![],
                     body_steps: vec![Proposition::Expr(Expression::Constructor(
                         constructor_name.clone(),
                         converted_expressions,
@@ -390,7 +507,7 @@ impl AxiomGenerator {
                 }]
             }
             crate::prog_ir::Expression::Literal(literal) => vec![BodyPropositionData {
-                pattern_constraints: vec![],
+                input_constraints: vec![],
                 body_steps: vec![Proposition::Expr(Expression::Literal(literal.clone()))],
                 additional_parameters: vec![],
             }],
@@ -399,57 +516,53 @@ impl AxiomGenerator {
                     .extract_exprs_with_steps(vec![expression], cache)
                     .unwrap_or_else(|e| panic!("UnaryOp operand: {}", e));
 
-                let mut results = Vec::new();
-                for extraction in combined {
-                    assert_eq!(
-                        extraction.expressions.len(),
-                        1,
-                        "UnaryOp requires exactly 1 expression, got {}",
-                        extraction.expressions.len()
-                    );
-
-                    let mut body_steps = extraction.preceding_steps.concat();
-                    body_steps.push(Proposition::Expr(Expression::UnaryOp(
-                        *unary_op,
-                        Box::new(extraction.expressions[0].clone()),
-                    )));
-
-                    results.push(BodyPropositionData {
-                        pattern_constraints: vec![],
-                        body_steps,
-                        additional_parameters: extraction.parameters,
-                    });
-                }
-                results
+                combined
+                    .into_iter()
+                    .map(|extraction| {
+                        assert_eq!(
+                            extraction.expressions.len(),
+                            1,
+                            "UnaryOp requires exactly 1 expression"
+                        );
+                        let mut body_steps = extraction.preceding_steps.concat();
+                        body_steps.push(Proposition::Expr(Expression::UnaryOp(
+                            *unary_op,
+                            Box::new(extraction.expressions[0].clone()),
+                        )));
+                        BodyPropositionData {
+                            input_constraints: vec![],
+                            body_steps,
+                            additional_parameters: extraction.parameters,
+                        }
+                    })
+                    .collect()
             }
             crate::prog_ir::Expression::BinaryOp(expression, binary_op, expression1) => {
                 let combined = self
                     .extract_exprs_with_steps(vec![&expression, &expression1], cache)
                     .unwrap_or_else(|e| panic!("BinaryOp operand: {}", e));
 
-                let mut results = Vec::new();
-                for extraction in combined {
-                    assert_eq!(
-                        extraction.expressions.len(),
-                        2,
-                        "BinaryOp requires exactly 2 expressions, got {}",
-                        extraction.expressions.len()
-                    );
-
-                    let mut body_steps = extraction.preceding_steps.concat();
-                    body_steps.push(Proposition::Expr(Expression::BinaryOp(
-                        Box::new(extraction.expressions[0].clone()),
-                        *binary_op,
-                        Box::new(extraction.expressions[1].clone()),
-                    )));
-
-                    results.push(BodyPropositionData {
-                        pattern_constraints: vec![],
-                        body_steps,
-                        additional_parameters: extraction.parameters,
-                    });
-                }
-                results
+                combined
+                    .into_iter()
+                    .map(|extraction| {
+                        assert_eq!(
+                            extraction.expressions.len(),
+                            2,
+                            "BinaryOp requires exactly 2 expressions"
+                        );
+                        let mut body_steps = extraction.preceding_steps.concat();
+                        body_steps.push(Proposition::Expr(Expression::BinaryOp(
+                            Box::new(extraction.expressions[0].clone()),
+                            *binary_op,
+                            Box::new(extraction.expressions[1].clone()),
+                        )));
+                        BodyPropositionData {
+                            input_constraints: vec![],
+                            body_steps,
+                            additional_parameters: extraction.parameters,
+                        }
+                    })
+                    .collect()
             }
             crate::prog_ir::Expression::Application(func_expr, arg_exprs) => {
                 let func_body_data =
@@ -493,7 +606,7 @@ impl AxiomGenerator {
                         body_steps.push(Proposition::Expr(existential));
 
                         results.push(BodyPropositionData {
-                            pattern_constraints: vec![],
+                            input_constraints: vec![],
                             body_steps,
                             additional_parameters: extraction.parameters,
                         });
@@ -520,7 +633,7 @@ impl AxiomGenerator {
                         ));
 
                         results.push(BodyPropositionData {
-                            pattern_constraints: vec![],
+                            input_constraints: vec![],
                             body_steps,
                             additional_parameters: extraction.parameters,
                         });
@@ -545,33 +658,19 @@ impl AxiomGenerator {
                         let pattern_constraint =
                             self.pattern_to_predicate_proposition(pattern_constraint_base, pattern);
 
-                        // Check if the final step is already an equality with RESULT_PARAM
                         let (last, rest) = branch_body_data.body_steps.split_last().unwrap();
-
                         let mut body_steps = rest.to_vec();
-
-                        if Self::is_result_equality(last) {
-                            // Final step is already wrapped with = res, don't wrap again
-                            body_steps.push(last.clone());
-                        } else {
-                            // Wrap the final expression with = RESULT_PARAM
-                            let last_expr = last.as_expr();
-                            body_steps.push(Proposition::Expr(Expression::BinaryOp(
-                                Box::new(last_expr.clone()),
-                                crate::prog_ir::BinaryOp::Eq,
-                                Box::new(Expression::Variable(RESULT_PARAM.into())),
-                            )));
-                        }
+                        body_steps.push(self.wrap_result_equality(last));
 
                         let mut all_vars = Parameter::from_vars(&pattern_vars);
                         all_vars.extend(branch_body_data.additional_parameters);
 
                         // Combine: outer pattern constraint + any nested pattern constraints + body steps
                         let mut all_patterns = vec![pattern_constraint];
-                        all_patterns.extend(branch_body_data.pattern_constraints.clone());
+                        all_patterns.extend(branch_body_data.input_constraints.clone());
 
                         results.push(BodyPropositionData {
-                            pattern_constraints: all_patterns,
+                            input_constraints: all_patterns,
                             body_steps,
                             additional_parameters: all_vars,
                         });
@@ -588,94 +687,58 @@ impl AxiomGenerator {
                 let mut results = Vec::new();
 
                 for condition_body_data in condition_results {
-                    let (last_cond, preceding_conds) = condition_body_data
-                        .body_steps
-                        .split_last()
-                        .unwrap_or_else(|| panic!("Expected at least one condition step"));
-                    let condition_expr = last_cond.as_expr().clone();
-
-                    // Loop over both branches with their bool values
-                    for (is_true, branch) in [(true, then_branch), (false, else_branch)] {
-                        // Clone cache for this exclusive branch (independent from condition and sibling branch)
-                        let mut branch_cache = cache.clone();
-                        let branch_results = self.analyze_expression(branch, &mut branch_cache);
-                        for branch_body_data in branch_results {
-                            // Pattern constraints: from condition + nested patterns in branch
-                            let mut pattern_constraints =
-                                condition_body_data.pattern_constraints.clone();
-                            pattern_constraints
-                                .extend(branch_body_data.pattern_constraints.clone());
-
-                            // Body steps: preceding condition steps + condition equality + branch steps
-                            let mut body_steps = preceding_conds.to_vec();
-                            body_steps.push(Proposition::Expr(Expression::BinaryOp(
-                                Box::new(condition_expr.clone()),
-                                crate::prog_ir::BinaryOp::Eq,
-                                Box::new(Expression::Literal(crate::Literal::Bool(is_true))),
-                            )));
-                            body_steps.extend(branch_body_data.body_steps);
-
-                            let mut params = condition_body_data.additional_parameters.clone();
-                            params.extend(branch_body_data.additional_parameters);
-
-                            results.push(BodyPropositionData {
-                                pattern_constraints,
-                                body_steps,
-                                additional_parameters: params,
-                            });
-                        }
-                    }
+                    results.extend(self.analyze_ite_branches(
+                        &condition_body_data,
+                        then_branch,
+                        else_branch,
+                        cache,
+                    ));
                 }
                 results
             }
             crate::prog_ir::Expression::Not(expr) => {
-                // Extract the argument with its preceding steps
                 let combined = self
                     .extract_exprs_with_steps(vec![expr], cache)
                     .unwrap_or_else(|e| panic!("Not expression: {}", e));
 
-                let mut results = Vec::new();
-                for extraction in combined {
-                    assert_eq!(
-                        extraction.expressions.len(),
-                        1,
-                        "Not requires exactly 1 expression, got {}",
-                        extraction.expressions.len()
-                    );
-
-                    // Flatten all preceding steps
-                    let mut body_steps = extraction.preceding_steps.concat();
-
-                    // Add the final Not expression
-                    body_steps.push(Proposition::Expr(Expression::Not(Box::new(
-                        extraction.expressions[0].clone(),
-                    ))));
-
-                    results.push(BodyPropositionData {
-                        pattern_constraints: vec![],
-                        body_steps,
-                        additional_parameters: extraction.parameters,
-                    });
-                }
-                results
+                combined
+                    .into_iter()
+                    .map(|extraction| {
+                        assert_eq!(
+                            extraction.expressions.len(),
+                            1,
+                            "Not requires exactly 1 expression"
+                        );
+                        let mut body_steps = extraction.preceding_steps.concat();
+                        body_steps.push(Proposition::Expr(Expression::Not(Box::new(
+                            extraction.expressions[0].clone(),
+                        ))));
+                        BodyPropositionData {
+                            input_constraints: vec![],
+                            body_steps,
+                            additional_parameters: extraction.parameters,
+                        }
+                    })
+                    .collect()
             }
             crate::prog_ir::Expression::Tuple(expressions) => {
                 let combined = self
                     .extract_exprs_with_steps(expressions.iter().collect(), cache)
                     .unwrap_or_else(|e| panic!("Tuple element: {}", e));
 
-                let mut results = Vec::new();
-                for extraction in combined {
-                    let mut body_steps = extraction.preceding_steps.concat();
-                    body_steps.push(Proposition::Expr(Expression::Tuple(extraction.expressions)));
-
-                    results.push(BodyPropositionData {
-                        pattern_constraints: vec![],
-                        body_steps,
-                        additional_parameters: extraction.parameters,
-                    });
-                }
-                results
+                combined
+                    .into_iter()
+                    .map(|extraction| {
+                        let mut body_steps = extraction.preceding_steps.concat();
+                        body_steps
+                            .push(Proposition::Expr(Expression::Tuple(extraction.expressions)));
+                        BodyPropositionData {
+                            input_constraints: vec![],
+                            body_steps,
+                            additional_parameters: extraction.parameters,
+                        }
+                    })
+                    .collect()
             }
         }
     }
@@ -693,6 +756,31 @@ mod tests {
 
     use crate::{ToLean, test_helpers};
 
+    /// Assert that axiom branches match expected Lean output
+    fn assert_axiom_branches(
+        actual: &[Vec<crate::spec_ir::Proposition>],
+        expected: &[Vec<&str>],
+    ) {
+        assert_eq!(
+            actual.len(),
+            expected.len(),
+            "Expected {} branches, got {}",
+            expected.len(),
+            actual.len()
+        );
+        for (i, (actual_branch, expected_branch)) in actual.iter().zip(expected).enumerate() {
+            let actual_lean: Vec<String> =
+                actual_branch.iter().map(|p| p.to_lean()).collect();
+            let expected_strings: Vec<String> =
+                expected_branch.iter().map(|s| s.to_string()).collect();
+            assert_eq!(
+                actual_lean, expected_strings,
+                "Branch {} mismatch",
+                i
+            );
+        }
+    }
+
     #[test]
     fn test_and_predicate_with_non_comparison() {
         // Test AND with an expression and a predicate: should create res_0 ∧ expr, not expr + res_0
@@ -700,18 +788,16 @@ mod tests {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec all_positive (l : ilist) : bool = match l with | Nil -> true | Cons { head = h; tail = t } -> (h > 0) && all_positive t";
         let props = test_helpers::generate_axioms_for(program_str, "all_positive");
 
-        assert_eq!(
-            props[0].iter().map(|p| p.to_lean()).collect_vec(),
-            vec!["(is_nil l)", "(true = res)"]
-        );
-
-        assert_eq!(
-            props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t))",
-                "(all_positive t res_0)",
-                "(((h > 0) ∧ res_0) = res)"
-            ]
+        assert_axiom_branches(
+            &props,
+            &[
+                vec!["(is_nil l)", "(true = res)"],
+                vec![
+                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
+                    "(all_positive t res_0)",
+                    "(((h > 0) ∧ res_0) = res)",
+                ],
+            ],
         );
     }
 
@@ -722,265 +808,193 @@ mod tests {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons { head = h; tail = t } -> (h = x) || mem x t";
         let props = test_helpers::generate_axioms_for(program_str, "mem");
 
-        assert_eq!(
-            props[0].iter().map(|p| p.to_lean()).collect_vec(),
-            vec!["(is_nil l)", "(false = res)"]
-        );
-
-        assert_eq!(
-            props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t))",
-                "(mem x t res_0)",
-                "(((h = x) ∨ res_0) = res)"
-            ]
+        assert_axiom_branches(
+            &props,
+            &[
+                vec!["(is_nil l)", "(false = res)"],
+                vec![
+                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
+                    "(mem x t res_0)",
+                    "(((h = x) ∨ res_0) = res)",
+                ],
+            ],
         );
     }
 
     #[test]
     fn test_nested_and_with_predicates() {
-        // Test AND where both sides involve predicates: all_eq uses AND with predicate
-        // all_eq t x: (h = x) && all_eq t x
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons { head = h; tail = t } -> (h = x) && all_eq t x";
         let props = test_helpers::generate_axioms_for(program_str, "all_eq");
 
-        assert_eq!(
-            props[0].iter().map(|p| p.to_lean()).collect_vec(),
-            vec!["(is_nil l)", "(true = res)"]
-        );
-
-        assert_eq!(
-            props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t))",
-                "(all_eq t x res_0)",
-                "(((h = x) ∧ res_0) = res)"
-            ]
+        assert_axiom_branches(
+            &props,
+            &[
+                vec!["(is_nil l)", "(true = res)"],
+                vec![
+                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
+                    "(all_eq t x res_0)",
+                    "(((h = x) ∧ res_0) = res)",
+                ],
+            ],
         );
     }
 
     #[test]
     fn test_arithmetic_with_predicate() {
-        // Test arithmetic operation with a predicate: len uses 1 + recursive call
-        // Tests that arithmetic expressions wrap the predicate result properly
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = x; tail = xs } -> 1 + len xs";
         let props = test_helpers::generate_axioms_for(program_str, "len");
 
-        assert_eq!(
-            props[0].iter().map(|p| p.to_lean()).collect_vec(),
-            vec!["(is_nil l)", "(0 = res)"]
-        );
-
-        assert_eq!(
-            props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs))",
-                "(len xs res_0)",
-                "((1 + res_0) = res)"
-            ]
+        assert_axiom_branches(
+            &props,
+            &[
+                vec!["(is_nil l)", "(0 = res)"],
+                vec![
+                    "((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs))",
+                    "(len xs res_0)",
+                    "((1 + res_0) = res)",
+                ],
+            ],
         );
     }
 
     #[test]
     fn test_nested_match_with_and() {
-        // Test nested match with AND: sorted has nested matches with AND in innermost branch
-        // Pattern: outer match on l, inner match on xs, result has (x <= y) && sorted xs
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons { head = x; tail = xs } -> match xs with | Nil -> true | Cons { head = y; tail = ys } -> (x <= y) && sorted xs";
         let props = test_helpers::generate_axioms_for(program_str, "sorted");
 
-        // Base case: l = Nil -> true
-        assert_eq!(
-            props[0].iter().map(|p| p.to_lean()).collect_vec(),
-            vec!["(is_nil l)", "(true = res)"]
-        );
-
-        // First recursive case: l = Cons, xs = Nil -> true
-        assert_eq!(
-            props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs))",
-                "(is_nil xs)",
-                "(true = res)"
-            ]
-        );
-
-        // Second recursive case: l = Cons, xs = Cons, with AND and predicate
-        assert_eq!(
-            props[2].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(((is_cons l) ∧ ((head l) = x)) ∧ ((tail l) = xs))",
-                "(((is_cons xs) ∧ ((head xs) = y)) ∧ ((tail xs) = ys))",
-                "(sorted xs res_0)",
-                "(((x ≤ y) ∧ res_0) = res)"
-            ]
+        assert_axiom_branches(
+            &props,
+            &[
+                vec!["(is_nil l)", "(true = res)"],
+                vec![
+                    "((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs))",
+                    "(is_nil xs)",
+                    "(true = res)",
+                ],
+                vec![
+                    "((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs))",
+                    "((is_cons xs) ∧ ((head xs) = y) ∧ ((tail xs) = ys))",
+                    "(sorted xs res_0)",
+                    "(((x ≤ y) ∧ res_0) = res)",
+                ],
+            ],
         );
     }
 
     #[test]
     fn test_ite_in_binary_op() {
-        // Test ite inside a binary operation: 1 + ite(x > 0, x, 0)
         let program_str = "type [@grind] data = Nil | Val of { value : int }\nlet [@simp] [@grind] rec test (d : data) : int = match d with | Nil -> 0 | Val { value = x } -> 1 + ite (x > 0) x 0";
         let props = test_helpers::generate_axioms_for(program_str, "test");
 
-        // Base case: Nil -> 0
-        assert_eq!(
-            props[0].iter().map(|p| p.to_lean()).collect_vec(),
-            vec!["(is_nil d)", "(0 = res)"]
-        );
-
-        // Recursive case: Val with ite - true branch (x > 0)
-        assert_eq!(
-            props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "((is_val d) ∧ ((value d) = x))",
-                "((x > 0) = true)",
-                "((1 + x) = res)"
-            ]
-        );
-
-        // Recursive case: Val with ite - false branch (x > 0 is false)
-        assert_eq!(
-            props[2].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "((is_val d) ∧ ((value d) = x))",
-                "((x > 0) = false)",
-                "((1 + 0) = res)"
-            ]
+        assert_axiom_branches(
+            &props,
+            &[
+                vec!["(is_nil d)", "(0 = res)"],
+                vec![
+                    "((is_val d) ∧ ((value d) = x))",
+                    "(x > 0)",
+                    "((1 + x) = res)",
+                ],
+                vec![
+                    "((is_val d) ∧ ((value d) = x))",
+                    "¬((x > 0))",
+                    "((1 + 0) = res)",
+                ],
+            ],
         );
     }
 
     #[test]
     fn test_tree_height_function() {
-        // Test tree height function with binary tree structure
         let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }
 
         let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> 1 + ite (height l > height r) (height l) (height r)";
         let props = test_helpers::generate_axioms_for(program_str, "height");
 
-        // Base case: Leaf -> 0
-        assert_eq!(
-            props[0].iter().map(|p| p.to_lean()).collect_vec(),
-            vec!["(is_leaf t)", "(0 = res)"]
-        );
-
-        // Recursive case: Node with ite - true branch (height l > height r)
-        // Condition sets up res_0 = height l, res_1 = height r
-        // True branch reuses res_0 from condition
-        assert_eq!(
-            props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "((((is_node t) ∧ ((value t) = v)) ∧ ((left t) = l)) ∧ ((right t) = r))",
-                "(height l res_0)",
-                "(height r res_1)",
-                "((res_0 > res_1) = true)",
-                "(height l res_0)",
-                "((1 + res_0) = res)"
-            ]
-        );
-
-        // Recursive case: Node with ite - false branch (height l > height r is false)
-        // False branch shares res_0, res_1 from condition and reuses them
-        assert_eq!(
-            props[2].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "((((is_node t) ∧ ((value t) = v)) ∧ ((left t) = l)) ∧ ((right t) = r))",
-                "(height l res_0)",
-                "(height r res_1)",
-                "((res_0 > res_1) = false)",
-                "(height r res_1)",
-                "((1 + res_1) = res)"
-            ]
+        assert_axiom_branches(
+            &props,
+            &[
+                vec!["(is_leaf t)", "(0 = res)"],
+                vec![
+                    "((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r))",
+                    "(height l res_0)",
+                    "(height r res_1)",
+                    "(res_0 > res_1)",
+                    "(height l res_0)",
+                    "((1 + res_0) = res)",
+                ],
+                vec![
+                    "((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r))",
+                    "(height l res_0)",
+                    "(height r res_1)",
+                    "¬((res_0 > res_1))",
+                    "(height r res_1)",
+                    "((1 + res_1) = res)",
+                ],
+            ],
         );
     }
 
     #[test]
     fn test_simple_ite_expression() {
-        // Test ite in simple form without nested predicates or operators
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec max_or_zero (l : ilist) : int = match l with | Nil -> 0 | Cons { head = h; tail = t } -> ite (h > 0) h 0";
         let props = test_helpers::generate_axioms_for(program_str, "max_or_zero");
 
-        // Base case: Nil -> 0
-        assert_eq!(
-            props[0].iter().map(|p| p.to_lean()).collect_vec(),
-            vec!["(is_nil l)", "(0 = res)"]
-        );
-
-        // Recursive case: Cons with ite - true branch (h > 0)
-        assert_eq!(
-            props[1].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t))",
-                "((h > 0) = true)",
-                "(h = res)"
-            ]
-        );
-
-        // Recursive case: Cons with ite - false branch (h > 0 is false)
-        assert_eq!(
-            props[2].iter().map(|p| p.to_lean()).collect_vec(),
-            vec![
-                "(((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t))",
-                "((h > 0) = false)",
-                "(0 = res)"
-            ]
+        assert_axiom_branches(
+            &props,
+            &[
+                vec!["(is_nil l)", "(0 = res)"],
+                vec![
+                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
+                    "(h > 0)",
+                    "(h = res)",
+                ],
+                vec![
+                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
+                    "¬((h > 0))",
+                    "(0 = res)",
+                ],
+            ],
         );
     }
 
     #[test]
     fn test_application_deduplication() {
-        // Test that duplicate function applications in the same branch reuse the same existential
-        // Function calls the same recursive function twice: max(a, b) = ite (a >= b) a b
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec max_elem (l : ilist) : int = match l with | Nil -> 0 | Cons { head = h; tail = t } -> ite (h >= (max_elem t)) h (max_elem t)";
         let props = test_helpers::generate_axioms_for(program_str, "max_elem");
 
-        // Base case: Nil -> 0
-        assert_eq!(
-            props[0].iter().map(|p| p.to_lean()).collect_vec(),
-            vec!["(is_nil l)", "(0 = res)"]
+        let branch_0: Vec<String> =
+            props[0].iter().map(|p| p.to_lean()).collect();
+        let branch_1: Vec<String> =
+            props[1].iter().map(|p| p.to_lean()).collect();
+        let branch_2: Vec<String> =
+            props[2].iter().map(|p| p.to_lean()).collect();
+
+        assert_axiom_branches(
+            &props,
+            &[
+                vec!["(is_nil l)", "(0 = res)"],
+                vec![
+                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
+                    "(max_elem t res_0)",
+                    "(h ≥ res_0)",
+                    "(h = res)",
+                ],
+                vec![
+                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
+                    "(max_elem t res_0)",
+                    "¬((h ≥ res_0))",
+                    "(max_elem t res_0)",
+                    "(res_0 = res)",
+                ],
+            ],
         );
 
-        // Recursive case: Cons with ite - true branch (h >= max_elem t)
-        // The condition references max_elem t once, should reuse same res_0
-        let props_1 = props[1].iter().map(|p| p.to_lean()).collect_vec();
-        assert_eq!(
-            props_1,
-            vec![
-                "(((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t))",
-                "(max_elem t res_0)",
-                "((h ≥ res_0) = true)",
-                "(h = res)"
-            ]
-        );
+        // Verify deduplication
+        let res_0_in_true = branch_1.join(" ").matches("res_0").count();
+        assert_eq!(res_0_in_true, 2);
 
-        // Recursive case: Cons with ite - false branch (h >= max_elem t is false)
-        // Both branches share the condition's cache (max_elem t = res_0 from condition)
-        // So the false branch body reuses res_0
-        let props_2 = props[2].iter().map(|p| p.to_lean()).collect_vec();
-        assert_eq!(
-            props_2,
-            vec![
-                "(((is_cons l) ∧ ((head l) = h)) ∧ ((tail l) = t))",
-                "(max_elem t res_0)",
-                "((h ≥ res_0) = false)",
-                "(max_elem t res_0)",
-                "(res_0 = res)"
-            ]
-        );
-
-        // Verify deduplication: within each branch, max_elem t is deduplicated
-        let res_0_in_true = props_1.join(" ").matches("res_0").count();
-        assert_eq!(
-            res_0_in_true, 2,
-            "True branch: res_0 should appear 2 times (predicate + condition), got {}",
-            res_0_in_true
-        );
-
-        // False branch also shares res_0 from condition: appears in predicate, condition, result predicate, and result expr
-        let res_0_in_false = props_2.join(" ").matches("res_0").count();
-        assert_eq!(
-            res_0_in_false, 4,
-            "False branch: res_0 should appear 4 times (predicate + condition + result predicate + result expr), got {}",
-            res_0_in_false
-        );
+        let res_0_in_false = branch_2.join(" ").matches("res_0").count();
+        assert_eq!(res_0_in_false, 4);
     }
 }

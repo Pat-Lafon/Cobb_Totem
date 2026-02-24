@@ -66,7 +66,7 @@ let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with
     #[test]
     fn test_list_length_program() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }
-    
+
     let [@simp] [@grind] rec len (l : ilist) : int =
     match l with
     | Nil -> 0

@@ -29,6 +29,18 @@ pub(crate) fn create_and_wrap_predicate(binding: &LetBinding) -> (LetBinding, Le
     impl_binding.name = impl_fn_name.clone();
     impl_binding.body = rename_function_calls_in(&impl_binding.body);
 
+    // Add termination proof for recursive functions with Int as first parameter
+    if binding.is_recursive
+        && !binding.params.is_empty()
+        && let Some((first_param_name, first_param_type)) = binding.params.first()
+        && matches!(first_param_type, Type::Int)
+    {
+        impl_binding.termination_proof = Some((
+            format!("{}.natAbs", first_param_name),
+            "all_goals grind".to_string(),
+        ));
+    }
+
     let mut wrapper_attributes = binding.attributes.clone();
     wrapper_attributes.push("grind unfold".to_string());
 
@@ -66,6 +78,7 @@ pub(crate) fn create_and_wrap_predicate(binding: &LetBinding) -> (LetBinding, Le
                 Box::new(Expression::Variable(VarName::new(RESULT_PARAM))),
             )
         },
+        termination_proof: None,
     };
 
     (impl_binding, wrapper)
