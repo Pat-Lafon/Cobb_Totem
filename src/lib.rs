@@ -194,22 +194,26 @@ pub(crate) mod test_helpers {
             .collect()
     }
 
-    /// Generate axiom proposition steps from a program string and function name
-    pub(crate) fn generate_axioms_for(program_str: &str, func_name: &str) -> Vec<Vec<Proposition>> {
+    /// Generate axiom proposition steps from a program string
+    pub(crate) fn generate_axioms_for(program_str: &str) -> Vec<Vec<Proposition>> {
         let parsed_nodes = parse_program(program_str);
-        let function = find_function(&parsed_nodes, func_name);
         let type_decls = extract_type_decls(&parsed_nodes);
 
         let mut generator = AxiomGenerator::new(type_decls);
-        generator
-            .prepare_function(&function)
-            .expect("Failed to prepare function");
+
+        // Prepare all functions in the program so that calls between them are resolved
+        for node in &parsed_nodes {
+            if let AstNode::LetBinding(binding) = node {
+                generator
+                    .prepare_function(binding)
+                    .expect("Failed to prepare function");
+            }
+        }
 
         generator
             .get_prepared()
             .iter()
-            .find(|(binding, _)| binding.name == function.name)
-            .map(|(_, props)| {
+            .flat_map(|(_, props)| {
                 props
                     .iter()
                     .map(|axiom| {
@@ -217,26 +221,29 @@ pub(crate) mod test_helpers {
                         steps.extend(axiom.body_steps.clone());
                         steps
                     })
-                    .collect()
+                    .collect::<Vec<_>>()
             })
-            .unwrap_or_default()
+            .collect()
     }
 
-    /// Generate complete axioms with impl and wrapper from a program string and function name
-    /// (Convenience wrapper for single-function programs)
+    /// Generate complete axioms with impl and wrapper from a program string
     /// Note: Returns ALL axioms (exported + internal) for validation purposes
     pub(crate) fn generate_axioms_with_wrapper(
         program_str: &str,
-        func_name: &str,
     ) -> (Vec<AstNode>, Vec<crate::spec_ir::Axiom>) {
         let mut parsed_nodes = parse_program(program_str);
-        let function = find_function(&parsed_nodes, func_name);
         let type_constructors = extract_type_decls(&parsed_nodes);
 
         let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&function)
-            .expect("Failed to prepare function");
+
+        // Prepare all functions in the program so that calls between them are resolved
+        for node in &parsed_nodes {
+            if let AstNode::LetBinding(binding) = node {
+                generator
+                    .prepare_function(binding)
+                    .expect("Failed to prepare function");
+            }
+        }
 
         // Wrap the function (and any others in parsed_nodes) with impl+wrapper
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);

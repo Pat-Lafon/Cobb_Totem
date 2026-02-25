@@ -8,6 +8,9 @@ use crate::{
 /// Suffix for domain-specific axioms (e.g., non-negativity constraints)
 pub(crate) const DOMAIN_AXIOM_SUFFIX: &str = "_geq_0";
 
+/// Standard result parameter name for axioms (e.g., "res" in `len l res`)
+pub(crate) const RESULT_PARAM: &str = "res";
+
 /// A specification axiom that can be translated to Lean theorems
 #[derive(Debug, Clone)]
 pub struct Axiom {
@@ -72,7 +75,7 @@ pub enum Proposition {
     Iff(Box<Proposition>, Box<Proposition>),
 
     /// Existential quantification: ∃ x : type, body
-    Existential(Box<Parameter>, Box<Proposition>),
+    Existential(Parameter, Box<Proposition>),
 }
 
 /// Expressions that appear as arguments to predicates
@@ -135,6 +138,11 @@ impl Parameter {
             .iter()
             .map(|(name, typ)| Parameter::universal(name.clone(), typ.clone()))
             .collect()
+    }
+
+    /// Create the standard result parameter for an axiom
+    pub(crate) fn result(typ: Type) -> Self {
+        Parameter::universal(RESULT_PARAM, typ)
     }
 }
 
@@ -237,6 +245,28 @@ impl Axiom {
     pub fn with_internal(mut self, internal: bool) -> Self {
         self.is_internal = internal;
         self
+    }
+
+    /// Create an axiom with proof from components
+    pub(crate) fn with_proof<F>(
+        name: String,
+        params: Vec<Parameter>,
+        body: Proposition,
+        proof_fn: &F,
+    ) -> Axiom
+    where
+        F: Fn(&Axiom) -> String,
+    {
+        let mut axiom = Axiom {
+            name,
+            params,
+            body,
+            proof: None,
+            attributes: vec![],
+            is_internal: false,
+        };
+        axiom.proof = Some(proof_fn(&axiom));
+        axiom
     }
 
     /// Count existential quantifiers in the proposition body
@@ -460,8 +490,9 @@ impl Proposition {
     /// Collect all variable references that appear in this proposition.
     /// Includes variables in expressions, predicate arguments, and existential binders.
     pub(crate) fn collect_variables(&self) -> std::collections::HashSet<VarName> {
-        self.fold(std::collections::HashSet::new(), &|mut vars, prop| {
-            match prop {
+        self.fold(
+            std::collections::HashSet::new(),
+            &|mut vars, prop| match prop {
                 Proposition::Expr(expr) => {
                     vars = expr.fold(vars, &|mut vars, e| {
                         if let Expression::Variable(v) = e {
@@ -487,16 +518,17 @@ impl Proposition {
                     vars
                 }
                 _ => vars,
-            }
-        })
+            },
+        )
     }
 
-    /// Collect all existentially-bound variables in this proposition.
-    /// These are variables introduced by existential quantifiers.
-    pub(crate) fn collect_existential_variables(&self) -> std::collections::HashSet<VarName> {
-        self.fold(std::collections::HashSet::new(), &|mut vars, prop| {
+    /// Collect all existentially-bound variables in this proposition, preserving duplicates.
+    /// Returns a vector of all existential variables (including duplicates).
+    /// Use `.into_iter().collect::<HashSet<_>>()` if deduplication is needed.
+    pub(crate) fn collect_existential_variables(&self) -> Vec<VarName> {
+        self.fold(Vec::new(), &|mut vars, prop| {
             if let Proposition::Existential(param, _) = prop {
-                vars.insert(param.name.clone());
+                vars.push(param.name.clone());
             }
             vars
         })
@@ -505,10 +537,7 @@ impl Proposition {
     /// Extract the other side of an equality if this is an equality with a variable.
     /// Handles both `var = expr` and `expr = var` forms.
     /// Returns `Some(expr)` if the variable is found on exactly one side, `None` otherwise.
-    pub(crate) fn extract_equality_other_side_for_var(
-        &self,
-        var: &VarName,
-    ) -> Option<&Expression> {
+    pub(crate) fn extract_equality_other_side_for_var(&self, var: &VarName) -> Option<&Expression> {
         match self {
             Proposition::Expr(Expression::BinaryOp(lhs, crate::prog_ir::BinaryOp::Eq, rhs)) => {
                 let lhs_var_set = lhs.fold(std::collections::HashSet::new(), &|mut vars, e| {

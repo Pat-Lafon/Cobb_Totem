@@ -421,7 +421,11 @@ impl AxiomGenerator {
                 input_constraints.extend(branch_body_data.input_constraints.clone());
 
                 let mut params = condition_body_data.additional_parameters.clone();
-                params.extend(branch_body_data.additional_parameters);
+                params.extend(branch_body_data.additional_parameters.clone());
+
+                // De-duplicate parameters by name - keep first occurrence
+                let mut seen_params = std::collections::HashSet::new();
+                params.retain(|p| seen_params.insert(p.name.clone()));
 
                 results.push(BodyPropositionData {
                     input_constraints,
@@ -752,15 +756,10 @@ impl AxiomGenerator {
 
 #[cfg(test)]
 mod tests {
-    use itertools::Itertools as _;
-
     use crate::{ToLean, test_helpers};
 
     /// Assert that axiom branches match expected Lean output
-    fn assert_axiom_branches(
-        actual: &[Vec<crate::spec_ir::Proposition>],
-        expected: &[Vec<&str>],
-    ) {
+    fn assert_axiom_branches(actual: &[Vec<crate::spec_ir::Proposition>], expected: &[Vec<&str>]) {
         assert_eq!(
             actual.len(),
             expected.len(),
@@ -769,15 +768,10 @@ mod tests {
             actual.len()
         );
         for (i, (actual_branch, expected_branch)) in actual.iter().zip(expected).enumerate() {
-            let actual_lean: Vec<String> =
-                actual_branch.iter().map(|p| p.to_lean()).collect();
+            let actual_lean: Vec<String> = actual_branch.iter().map(|p| p.to_lean()).collect();
             let expected_strings: Vec<String> =
                 expected_branch.iter().map(|s| s.to_string()).collect();
-            assert_eq!(
-                actual_lean, expected_strings,
-                "Branch {} mismatch",
-                i
-            );
+            assert_eq!(actual_lean, expected_strings, "Branch {} mismatch", i);
         }
     }
 
@@ -786,7 +780,7 @@ mod tests {
         // Test AND with an expression and a predicate: should create res_0 ∧ expr, not expr + res_0
         // Using a boolean function that returns true and ANDs with a recursive call
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec all_positive (l : ilist) : bool = match l with | Nil -> true | Cons { head = h; tail = t } -> (h > 0) && all_positive t";
-        let props = test_helpers::generate_axioms_for(program_str, "all_positive");
+        let props = test_helpers::generate_axioms_for(program_str);
 
         assert_axiom_branches(
             &props,
@@ -806,7 +800,7 @@ mod tests {
         // Test OR with a comparison and a predicate: should create expr ∨ res_0
         // Using the mem function which ORs a comparison with a recursive call
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec mem (x : int) (l : ilist) : bool = match l with | Nil -> false | Cons { head = h; tail = t } -> (h = x) || mem x t";
-        let props = test_helpers::generate_axioms_for(program_str, "mem");
+        let props = test_helpers::generate_axioms_for(program_str);
 
         assert_axiom_branches(
             &props,
@@ -824,7 +818,7 @@ mod tests {
     #[test]
     fn test_nested_and_with_predicates() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons { head = h; tail = t } -> (h = x) && all_eq t x";
-        let props = test_helpers::generate_axioms_for(program_str, "all_eq");
+        let props = test_helpers::generate_axioms_for(program_str);
 
         assert_axiom_branches(
             &props,
@@ -842,7 +836,7 @@ mod tests {
     #[test]
     fn test_arithmetic_with_predicate() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = x; tail = xs } -> 1 + len xs";
-        let props = test_helpers::generate_axioms_for(program_str, "len");
+        let props = test_helpers::generate_axioms_for(program_str);
 
         assert_axiom_branches(
             &props,
@@ -860,7 +854,7 @@ mod tests {
     #[test]
     fn test_nested_match_with_and() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons { head = x; tail = xs } -> match xs with | Nil -> true | Cons { head = y; tail = ys } -> (x <= y) && sorted xs";
-        let props = test_helpers::generate_axioms_for(program_str, "sorted");
+        let props = test_helpers::generate_axioms_for(program_str);
 
         assert_axiom_branches(
             &props,
@@ -884,7 +878,7 @@ mod tests {
     #[test]
     fn test_ite_in_binary_op() {
         let program_str = "type [@grind] data = Nil | Val of { value : int }\nlet [@simp] [@grind] rec test (d : data) : int = match d with | Nil -> 0 | Val { value = x } -> 1 + ite (x > 0) x 0";
-        let props = test_helpers::generate_axioms_for(program_str, "test");
+        let props = test_helpers::generate_axioms_for(program_str);
 
         assert_axiom_branches(
             &props,
@@ -909,7 +903,7 @@ mod tests {
         let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }
 
         let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> 1 + ite (height l > height r) (height l) (height r)";
-        let props = test_helpers::generate_axioms_for(program_str, "height");
+        let props = test_helpers::generate_axioms_for(program_str);
 
         assert_axiom_branches(
             &props,
@@ -938,7 +932,7 @@ mod tests {
     #[test]
     fn test_simple_ite_expression() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec max_or_zero (l : ilist) : int = match l with | Nil -> 0 | Cons { head = h; tail = t } -> ite (h > 0) h 0";
-        let props = test_helpers::generate_axioms_for(program_str, "max_or_zero");
+        let props = test_helpers::generate_axioms_for(program_str);
 
         assert_axiom_branches(
             &props,
@@ -961,14 +955,7 @@ mod tests {
     #[test]
     fn test_application_deduplication() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec max_elem (l : ilist) : int = match l with | Nil -> 0 | Cons { head = h; tail = t } -> ite (h >= (max_elem t)) h (max_elem t)";
-        let props = test_helpers::generate_axioms_for(program_str, "max_elem");
-
-        let branch_0: Vec<String> =
-            props[0].iter().map(|p| p.to_lean()).collect();
-        let branch_1: Vec<String> =
-            props[1].iter().map(|p| p.to_lean()).collect();
-        let branch_2: Vec<String> =
-            props[2].iter().map(|p| p.to_lean()).collect();
+        let props = test_helpers::generate_axioms_for(program_str);
 
         assert_axiom_branches(
             &props,
@@ -989,12 +976,5 @@ mod tests {
                 ],
             ],
         );
-
-        // Verify deduplication
-        let res_0_in_true = branch_1.join(" ").matches("res_0").count();
-        assert_eq!(res_0_in_true, 2);
-
-        let res_0_in_false = branch_2.join(" ").matches("res_0").count();
-        assert_eq!(res_0_in_false, 4);
     }
 }

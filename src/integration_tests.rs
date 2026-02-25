@@ -4,7 +4,7 @@ mod integration_tests {
     use crate::ocamlparser::OcamlParser;
     use crate::prog_ir::AstNode;
 
-    fn validate_program(program_str: &str, func_names: &[&str]) {
+    fn validate_program(program_str: &str) {
         let parsed_nodes = OcamlParser::parse_nodes(program_str)
             .unwrap_or_else(|e| panic!("Failed to parse program: {}", e));
 
@@ -20,20 +20,12 @@ mod integration_tests {
         let mut generator = AxiomGenerator::new(type_decls.clone());
 
         // Prepare all functions in the program
-        for func_name in func_names {
-            let function = parsed_nodes
-                .iter()
-                .find_map(|node| match node {
-                    AstNode::LetBinding(binding) if binding.name.as_str() == *func_name => {
-                        Some(binding.clone())
-                    }
-                    _ => None,
-                })
-                .unwrap_or_else(|| panic!("Expected to find {} function", func_name));
-
-            generator
-                .prepare_function(&function)
-                .expect("Failed to prepare function");
+        for node in &parsed_nodes {
+            if let AstNode::LetBinding(binding) = node {
+                generator
+                    .prepare_function(binding)
+                    .expect("Failed to prepare function");
+            }
         }
 
         // Wrap all functions with impl+wrapper
@@ -60,7 +52,7 @@ let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with
 | Nil -> true
 | Cons { head = y; tail = ys } -> (x <= y) && sorted xs";
 
-        validate_program(program_str, &["sorted"]);
+        validate_program(program_str);
     }
 
     #[test]
@@ -72,7 +64,7 @@ let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with
     | Nil -> 0
     | Cons { head = x; tail = xs } -> 1 + len xs";
 
-        validate_program(program_str, &["len"]);
+        validate_program(program_str);
     }
 
     #[test]
@@ -81,7 +73,7 @@ let [@simp] [@grind] rec sorted (l : ilist) : bool = match l with
 
 let [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> ite (height l > height r) (1 + height l) (1 + height r)";
 
-        validate_program(program_str, &["height"]);
+        validate_program(program_str);
     }
 
     #[test]
@@ -95,7 +87,7 @@ match t with
 | Leaf -> true
 | Node { value = x; left = l; right = r } -> complete l && complete r && height l = height r";
 
-        validate_program(program_str, &["height", "complete"]);
+        validate_program(program_str);
     }
 
     #[test]
@@ -118,7 +110,7 @@ match t with
 | Leaf -> true
 | Node { value = x; left = l; right = r } -> bst l && bst r && upper_bound l x && lower_bound r x";
 
-        validate_program(program_str, &["lower_bound", "upper_bound", "bst"]);
+        validate_program(program_str);
     }
 
     #[test]
@@ -150,31 +142,22 @@ let [@simp] [@grind] rec no_red_red (t : rbtree) : bool =
             | Rbtleaf -> true
 )
 let [@simp] [@grind] rec rb_root_color (t : rbtree) (c : bool) : bool =
-  match t with Rbtleaf -> false | Rbtnode { color = c'; left = _; value = _; right = _ } -> c = c'
+   match t with Rbtleaf -> false | Rbtnode { color = c'; left = _; value = _; right = _ } -> c = c'
 
 let [@simp] [@grind] rec rbtree_invariant (t : rbtree) (h : int) : bool =
-  match t with
-  | Rbtleaf -> h = 0
-  | Rbtnode { color = c; left = l; value = _; right = r } ->
-      if not c then rbtree_invariant l (h - 1) && rbtree_invariant r (h - 1)
-      else
-        ((not (rb_root_color l true)) && not (rb_root_color r true))
-        && rbtree_invariant l h && rbtree_invariant r h
+   match t with
+   | Rbtleaf -> h = 0
+   | Rbtnode { color = c; left = l; value = _; right = r } ->
+       if not c then rbtree_invariant l (h - 1) && rbtree_invariant r (h - 1)
+       else
+         ((not (rb_root_color l true)) && not (rb_root_color r true))
+         && rbtree_invariant l h && rbtree_invariant r h
 
 let [@simp] [@grind] rec rbdepth (t : rbtree) : int =
-  match t with
-  | Rbtleaf -> 0
-  | Rbtnode { color = _; left = l; value = _; right = r } -> ite (rbdepth l > rbdepth r) (1 + rbdepth l) (1 + rbdepth r)";
+   match t with
+   | Rbtleaf -> 0
+   | Rbtnode { color = _; left = l; value = _; right = r } -> ite (rbdepth l > rbdepth r) (1 + rbdepth l) (1 + rbdepth r)";
 
-        validate_program(
-            program_str,
-            &[
-                "num_black",
-                "no_red_red",
-                "rb_root_color",
-                "rbtree_invariant",
-                "rbdepth",
-            ],
-        );
+        validate_program(program_str);
     }
 }
