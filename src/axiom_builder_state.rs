@@ -1805,12 +1805,12 @@ mod tests {
     match l with
     | Nil -> true
     | Cons { head = x; tail = xs } ->
-      if is_even_num x then all_even xs else false";
+      is_even_num x && all_even xs";
 
         let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
 
         let all_even_0_expected = "theorem all_even_0 : ∀ l : ilist, ∀ res : Bool, ((all_even l res) → ((is_nil l) → (true = res))) := by grind";
-        let all_even_1_expected = "theorem all_even_1 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ res : Bool, ((all_even l res) → (((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) → (∃ res_2 : Bool, (((is_even_num x res_2) ∧ res_2) → (∃ res_3 : Bool, ((all_even xs res_3) ∧ (res_3 = res))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n";
+        let all_even_1_expected = "theorem all_even_1 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ res : Bool, ((all_even l res) → (((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) → (∃ res_2 : Bool, ((is_even_num x res_2) → (∃ res_3 : Bool, ((all_even xs res_3) ∧ (((res_2 ∧ res_3) ∧ res) ∨ (¬((res_2 ∧ res_3)) ∧ ¬(res))))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n";
 
         assert_axiom_lean_output(
             &axioms,
