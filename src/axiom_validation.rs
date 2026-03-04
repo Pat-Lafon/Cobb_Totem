@@ -73,12 +73,13 @@ impl Axiom {
         }
 
         Err(format!(
-            "Free variables in body: {}",
+            "Free variables in body: {}\nAxioms:{}",
             free_vars
                 .iter()
                 .map(|v| v.to_string())
                 .collect::<Vec<_>>()
-                .join(", ")
+                .join(", "),
+            self.to_string()
         ))
     }
 }

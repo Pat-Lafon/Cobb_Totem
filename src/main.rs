@@ -26,7 +26,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let program_str = fs::read_to_string(&file_path)
         .unwrap_or_else(|e| panic!("Failed to read file '{}': {}", file_path, e));
 
-    // Generate and validate axioms using unified helper
+    // Generate and validate axioms
     let (_parsed_nodes, axioms) = cobb_totem::generate_and_validate_axioms(&program_str)?;
 
     eprintln!("Generated axioms:");

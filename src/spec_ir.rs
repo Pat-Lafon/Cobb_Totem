@@ -311,6 +311,7 @@ impl Axiom {
             tactic.push_str("| _ => \n");
             tactic.push_str("  try simp_all; grind\n");
             tactic.push_str("  try aesop\n");
+            tactic.push_str("  try grind\n");
 
             tactic
         } else {
@@ -433,6 +434,16 @@ impl Proposition {
         }
     }
 
+    /// Create a conjunction from propositions if there are multiple, otherwise return the single proposition.
+    /// Useful for building AND constraints that may only have one element.
+    pub(crate) fn optional_conjunction(propositions: Vec<Proposition>) -> Proposition {
+        if propositions.len() == 1 {
+            propositions.into_iter().next().unwrap()
+        } else {
+            Proposition::And(propositions)
+        }
+    }
+
     /// Map a transformation function over a proposition, recursing post-order through the tree.
     /// Post-order: children are recursively transformed before applying `f`.
     pub(crate) fn map<F>(self, f: &F) -> Proposition
@@ -532,38 +543,6 @@ impl Proposition {
             }
             vars
         })
-    }
-
-    /// Extract the other side of an equality if this is an equality with a variable.
-    /// Handles both `var = expr` and `expr = var` forms.
-    /// Returns `Some(expr)` if the variable is found on exactly one side, `None` otherwise.
-    pub(crate) fn extract_equality_other_side_for_var(&self, var: &VarName) -> Option<&Expression> {
-        match self {
-            Proposition::Expr(Expression::BinaryOp(lhs, crate::prog_ir::BinaryOp::Eq, rhs)) => {
-                let lhs_var_set = lhs.fold(std::collections::HashSet::new(), &|mut vars, e| {
-                    if let Expression::Variable(v) = e {
-                        vars.insert(v.clone());
-                    }
-                    vars
-                });
-                let rhs_var_set = rhs.fold(std::collections::HashSet::new(), &|mut vars, e| {
-                    if let Expression::Variable(v) = e {
-                        vars.insert(v.clone());
-                    }
-                    vars
-                });
-
-                let lhs_has_var = lhs_var_set.contains(var);
-                let rhs_has_var = rhs_var_set.contains(var);
-
-                match (lhs_has_var, rhs_has_var) {
-                    (true, false) => Some(rhs),
-                    (false, true) => Some(lhs),
-                    _ => None,
-                }
-            }
-            _ => None,
-        }
     }
 }
 
