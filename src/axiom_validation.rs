@@ -79,7 +79,7 @@ impl Axiom {
                 .map(|v| v.to_string())
                 .collect::<Vec<_>>()
                 .join(", "),
-            self.to_string()
+            self
         ))
     }
 }
