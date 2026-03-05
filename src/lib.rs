@@ -221,12 +221,12 @@ pub(crate) mod test_helpers {
                         if let Some(result_expr) = &axiom.result_expr {
                             all_body_steps.push(Proposition::Expr(result_expr.clone()));
                         }
-                        
+
                         let mut steps = axiom.input_constraints.clone();
                         if !all_body_steps.is_empty() {
                             steps.push(Proposition::optional_conjunction(all_body_steps));
                         }
-                        
+
                         steps
                     })
                     .collect::<Vec<_>>()

@@ -113,55 +113,21 @@ impl AxiomBuilderState {
         body.contains_literal_zero() && body.contains_addition()
     }
 
-    /// Verify that a specific base case body is suitable for pattern inference.
+    /// Check if a base case is suitable for pattern inference (injectivity detection).
     ///
-    /// Combines the function-level heuristic with actual inspection of the case's output:
-    /// 1. Function must exhibit non-negativity pattern (zero + addition)
-    /// 2. This specific case must have extractable output value
-    /// 3. Output should be a literal constant (not a variable or complex expression)
-    ///
-    /// The non-negativity heuristic (zero + addition) works because most injective functions
-    /// follow this pattern:
-    /// - Base case returns literal constant (e.g., 0)
-    /// - Recursive cases build up from that base (e.g., 1 + recursive_result)
-    /// - Therefore, the base case output is unique and injective
-    ///
-    /// Examples where this works:
-    /// - `len`: Nil→0, Cons→1+len → 0 is unique to base case ✓
-    /// - `height`: Leaf→0, Node→1+max(height,height) → 0 is unique to base case ✓
-    ///
-    /// Examples where this correctly fails:
-    /// - `even_list`: []→true, _::_→true → has no zero, returns false ✓
-    /// - Function with boolean result (no zero literal) → correctly skipped
-    ///
-    /// **Limitation**: Cannot detect if base case returns non-zero literal
-    /// (e.g., `Nil → 1` would fail this heuristic even if it were injective).
-    /// This is acceptable because:
-    /// 1. Most list/tree functions return 0 as base case
-    /// 2. User can add domain-specific axioms for non-standard cases
-    /// 3. Pattern inference is optional; functions still get forward/reverse axioms
+    /// Requires: (1) non-boolean return type, (2) non-negativity pattern (zero + addition), (3) extractable literal output
     pub(crate) fn verify_base_case_output_is_injective(
         binding: &LetBinding,
         body_prop: &BodyPropositionData,
     ) -> bool {
-        // Inference axioms are only valid for injective base cases.
-        // Skip boolean-returning functions: different cases often return different values (true/false),
-        // making the heuristic invalid.
-        // Example: is_even returns true for x=0, false for x=1, false for x=-1, etc.
-        // These are NOT injective - we can't infer the input from the output uniquely.
         if matches!(binding.return_type, Some(crate::prog_ir::Type::Bool)) {
             return false;
         }
 
-        // Check function-level heuristic: must have literal zero and addition
-        // This works because most injective functions follow the pattern:
-        //   base_case → 0
-        //   recursive_case → 0 + something
         if !Self::has_non_negativity_pattern(binding) {
             return false;
         }
 
-        // Must be able to extract a literal output value from result_expr
         body_prop.extract_result_literal().is_some()
     }
 
@@ -180,25 +146,20 @@ impl AxiomBuilderState {
         Proposition::Or(Box::new(and_both), Box::new(not_both))
     }
 
-    /// Transform boolean equalities (A == B where A or B are boolean expressions) into biconditionals
-    /// Also decomposes (expr && cond) == res into expr == res && cond == res when safe
-    /// Note: transformation is applied post-order, so nested patterns are already transformed
+    /// Transform boolean equalities into biconditionals during post-order traversal
     fn transform_and_equality(prop: &Proposition) -> Proposition {
-        prop.clone().map(&|p| {
-            match p {
-                Proposition::Expr(Expression::BinaryOp(ref lhs, BinaryOp::Eq, ref rhs)) => {
-                    if lhs.is_boolean_expr() {
-                        // Convert boolean equality to biconditional
-                        Self::boolean_equality_to_biconditional(
-                            lhs.as_ref().clone(),
-                            rhs.as_ref().clone(),
-                        )
-                    } else {
-                        p
-                    }
+        prop.clone().map(&|p| match p {
+            Proposition::Expr(Expression::BinaryOp(ref lhs, BinaryOp::Eq, ref rhs)) => {
+                if lhs.is_boolean_expr() {
+                    Self::boolean_equality_to_biconditional(
+                        lhs.as_ref().clone(),
+                        rhs.as_ref().clone(),
+                    )
+                } else {
+                    p
                 }
-                _ => p,
             }
+            _ => p,
         })
     }
 
@@ -223,23 +184,17 @@ impl AxiomBuilderState {
         prop
     }
 
-    /// Strengthen implications to conjunctions when both sides reference the given parameter.
-    ///
-    /// Given an existential parameter in scope, decides whether an implication can be
-    /// strengthened to a conjunction based on whether both sides reference the parameter.
-    /// Returns the original proposition if it's not an implication or doesn't meet criteria.
+    /// Strengthen implications to conjunctions when both sides reference the given parameter
     fn strengthen_implication_in_scope(param_name: &VarName, prop: Proposition) -> Proposition {
         match prop {
             Proposition::Implication(left, right) => {
                 let left_vars = left.collect_variables();
                 let right_vars = right.collect_variables();
 
-                // If either side doesn't reference the existential, keep as implication
                 if !left_vars.contains(param_name) || !right_vars.contains(param_name) {
                     return Proposition::Implication(left, right);
                 }
 
-                // Exception: don't strengthen if right side is an existential
                 if matches!(&*right, Proposition::Existential(_, _)) {
                     return Proposition::Implication(left, right);
                 }
@@ -248,35 +203,25 @@ impl AxiomBuilderState {
                     Proposition::Implication(right_left, right_right) => {
                         let right_left_vars = right_left.collect_variables();
                         if right_left_vars.contains(param_name) {
-                            // Combine: (A ∧ B) → C
                             Proposition::Implication(
                                 Box::new(Proposition::And(vec![*left, *right_left])),
                                 right_right,
                             )
                         } else {
-                            // Keep separate: A ∧ (B → C)
                             Proposition::And(vec![
                                 *left,
                                 Proposition::Implication(right_left, right_right),
                             ])
                         }
                     }
-                    other => {
-                        // Convert to conjunction: A ∧ B
-                        Proposition::And(vec![*left, other])
-                    }
+                    other => Proposition::And(vec![*left, other]),
                 }
             }
             other => other,
         }
     }
 
-    /// Apply conjunction strengthening: converts implications to conjunctions
-    /// in existential bodies when both sides reference the same existential variable.
-    ///
-    /// This is a separate post-processing step that optimizes wrapped existentials
-    /// by strengthening implications to conjunctions where the structure better
-    /// represents the logical relationship.
+    /// Convert implications to conjunctions in existential bodies when both sides reference the existential
     fn apply_conjunction_strengthening(prop: Proposition) -> Proposition {
         prop.map(&|p| match p {
             Proposition::Existential(param, body) => {
@@ -287,18 +232,12 @@ impl AxiomBuilderState {
         })
     }
 
-    /// Final pass to reduce scope of existentials where possible.
-    /// If an existential wraps an implication where the consequent doesn't reference
-    /// the existential variable, push the existential into the antecedent only:
-    /// `∃ p, (A → B)` where B doesn't contain p becomes `(∃ p, A) → B`
+    /// Reduce scope of existentials: push `∃ p` into antecedent only when consequent doesn't reference p
     fn apply_scope_reduction_pass(prop: Proposition) -> Proposition {
         prop.map(&|p| match p {
             Proposition::Existential(param, body) => {
-                // Try to reduce the scope within this existential body
                 if let Proposition::Implication(left, right) = *body.clone() {
                     let right_vars = right.collect_variables();
-                    // If the right side (consequent) doesn't reference this param,
-                    // push the existential to wrap only the left side
                     if !right_vars.contains(&param.name) {
                         return Proposition::Implication(
                             Box::new(Proposition::Existential(param.clone(), left)),
@@ -355,14 +294,9 @@ impl AxiomBuilderState {
         F: Fn(&Axiom) -> String,
     {
         let all_steps = body_prop.collect_all_steps();
-
-        // Collect existential parameters
         let (uni_params, ext_params) = body_prop.partition_parameters();
 
-        // Build implication chain
         let mut steps_body = Self::build_implication_chain(&all_steps);
-
-
         steps_body = Self::wrap_at_first_usage_pass(&steps_body, ext_params);
         steps_body = Self::apply_conjunction_strengthening(steps_body);
         steps_body = Self::apply_scope_reduction_pass(steps_body);
@@ -373,7 +307,6 @@ impl AxiomBuilderState {
         );
 
         let params = self.build_and_partition_params_for(binding, &uni_params);
-
         Axiom::with_proof(format!("{}_{}", binding.name, idx), params, body, proof_fn)
     }
 
@@ -389,11 +322,8 @@ impl AxiomBuilderState {
         F: Fn(&Axiom) -> String,
     {
         let all_steps = body_prop.collect_all_steps();
-
-        // Collect existential parameters
         let (uni_params, ext_params) = body_prop.partition_parameters();
 
-        // Build reverse chain: steps → predicate with implication
         let mut body = self.build_predicate_for(binding);
 
         for step in all_steps.iter().rev() {
@@ -461,22 +391,18 @@ impl AxiomBuilderState {
         // Build the predicate with its arguments
         let predicate_prop = self.build_predicate_for(binding);
 
-
         // Add input constraints (patterns) as implications that consequent to output_eq
         // order: output_eq → constraint₁ → constraint₂ → ...
         for constraint in body_prop.input_constraints.iter() {
             body = Proposition::Implication(Box::new(body), Box::new(constraint.clone()));
         }
 
-        // Wrap with predicate implication: predicate → (output_eq → constraints)
         body = Proposition::Implication(Box::new(predicate_prop), Box::new(body));
-        // Apply lazy existential wrapping with conjunction strengthening and scope reduction
         body = Self::wrap_at_first_usage_pass(&body, ext_params);
         body = Self::apply_conjunction_strengthening(body);
         body = Self::apply_scope_reduction_pass(body);
 
         let params = self.build_and_partition_params_for(binding, &uni_params);
-
         Some(Axiom::with_proof(
             format!("{}_{}_infer", binding.name, idx),
             params,
@@ -485,20 +411,7 @@ impl AxiomBuilderState {
         ))
     }
 
-    /// Build forward-pattern axiom for a given binding and body proposition.
-    ///
-    /// Forward-pattern axioms express that when a pattern is known, the predicate
-    /// implies the body. Only generated when pattern constraints are non-empty
-    /// (i.e., the axiom has at least one pattern constraint).
-    ///
-    /// Structure: `(patterns → (predicate → body))`
-    /// This maintains pattern context at the front for inference while establishing
-    /// forward implication from predicate to body.
-    ///
-    /// For `len` base case (Nil→0):
-    /// `(is_nil l) → ((len l res) → (0 == res))`
-    ///
-    /// This reads: "Given the pattern is nil, if the predicate holds, then the result equals 0"
+    /// Build forward-pattern axiom: generated only when pattern constraints are non-empty
     fn build_fwd_pattern_axiom<F>(
         &self,
         binding: &LetBinding,
@@ -509,43 +422,29 @@ impl AxiomBuilderState {
     where
         F: Fn(&Axiom) -> String,
     {
-        // Guard: only generate if there are input constraints (structural patterns or guard conditions)
         if body_prop.input_constraints.is_empty() {
             return None;
         }
 
-        // Collect parameters: split by quantifier type
         let (uni_params, ext_params) = body_prop.partition_parameters();
-
-        // Build the predicate with its arguments
         let predicate_prop = self.build_predicate_for(binding);
 
-        // Build the consequent: body steps ∧ result expression
         let mut consequent_steps = body_prop.body_steps.clone();
         if let Some(result_expr) = &body_prop.result_expr {
             consequent_steps.push(Proposition::Expr(result_expr.clone()));
         }
         let consequent = Proposition::optional_conjunction(consequent_steps);
 
-        // Create forward implication: predicate → (body_steps ∧ result)
         let mut final_body =
             Proposition::Implication(Box::new(predicate_prop), Box::new(consequent));
 
-        // Add patterns as antecedents: pattern₁ → (pattern₂ → (... → (pred → result)))
-        // Input constraints are collected with structural constraints first, guards last.
-        // We want guards first (most selective), then structural patterns.
-        // So reverse the list to get the correct order.
         let mut patterns_ordered = body_prop.input_constraints.clone();
         patterns_ordered.reverse();
 
-        // Chain patterns so they nest correctly left-to-right
-        // For patterns [is_nil xs, structural], build: is_nil xs → (structural → forward_impl)
         for pattern in patterns_ordered.iter().rev() {
             final_body = Proposition::Implication(Box::new(pattern.clone()), Box::new(final_body));
         }
 
-        // Skip conjunction strengthening for forward patterns: we need patterns → (predicate → result)
-        // Strengthening would convert this to patterns ∧ (predicate → result), breaking the structure
         final_body = Self::wrap_at_first_usage_pass(&final_body, ext_params);
         final_body = Self::apply_scope_reduction_pass(final_body);
 
@@ -852,31 +751,22 @@ mod tests {
     use crate::spec_ir::Axiom;
     use crate::test_helpers;
 
-    #[test]
-    fn test_generate_axioms_from_length_function() {
-        use crate::axiom_generator::AxiomGenerator;
+    /// Assert that axioms with given names match expected Lean output
+    fn assert_axiom_lean_output(axioms: &[Axiom], expectations: &[(&str, &str)]) {
+        for (expected_name, expected_lean) in expectations {
+            let axiom = axioms
+                .iter()
+                .find(|a| &a.name == expected_name)
+                .unwrap_or_else(|| panic!("{} axiom should exist", expected_name));
 
-        let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\n\nlet [@simp] [@grind] rec len (l : ilist) : int =\nmatch l with\n| Nil -> 0\n| Cons { head = x; tail = xs } -> 1 + len xs";
-
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let len_fn = test_helpers::find_function(&parsed_nodes, "len");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
-
-        let mut generator = AxiomGenerator::new(type_constructors);
-        generator
-            .prepare_function(&len_fn)
-            .expect("Failed to prepare len");
-
-        let builder = generator
-            .build_all()
-            .with_proof(|a| a.suggest_proof_tactic());
-
-        // Validate axioms with Lean backend
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
-        builder
-            .validate_with_lean(parsed_nodes, &type_constructors)
-            .expect("Failed to validate axioms with Lean");
+            let actual_lean = axiom.to_lean();
+            assert_eq!(
+                actual_lean.trim(),
+                expected_lean.trim(),
+                "{} axiom has incorrect structure",
+                expected_name
+            );
+        }
     }
 
     #[test]
@@ -923,59 +813,22 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_axioms_from_sorted_function() {
-        use crate::axiom_generator::AxiomGenerator;
-
-        let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons { head = x; tail = xs } -> match xs with | Nil -> true | Cons { head = y; tail = ys } -> (x <= y) && sorted xs";
-
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let sorted_fn = test_helpers::find_function(&parsed_nodes, "sorted");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
-
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&sorted_fn)
-            .expect("Failed to prepare sorted");
-
-        let builder = generator
-            .build_all()
-            .with_proof(|a| a.suggest_proof_tactic());
-
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        builder
-            .validate_with_lean(parsed_nodes, &type_constructors)
-            .expect("Failed to validate axioms with Lean");
-    }
-
-    #[test]
-    fn test_sorted_1_fwd_pattern_axiom_structure() {
+    fn test_sorted_axiom_structures() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons { head = x; tail = xs } -> match xs with | Nil -> true | Cons { head = y; tail = ys } -> (x <= y) && sorted xs";
         let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
 
-        let expected = "theorem sorted_1_fwd_pattern : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ res : Bool, ((is_nil xs) → (((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) → ((sorted l res) → (true = res)))) := by grind";
-        assert_axiom_lean_output(&axioms, &[("sorted_1_fwd_pattern", expected)]);
+        let sorted_1_fwd_pattern_expected = "theorem sorted_1_fwd_pattern : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ res : Bool, ((is_nil xs) → (((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) → ((sorted l res) → (true = res)))) := by grind";
+        let sorted_2_expected = "theorem sorted_2 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, ((sorted l res) → (((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) → (((is_cons xs) ∧ ((head xs) = y) ∧ ((tail xs) = ys)) → (∃ res_0 : Bool, ((sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res)))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
+        let sorted_2_rev_expected = "theorem sorted_2_rev : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, (((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) → (((is_cons xs) ∧ ((head xs) = y) ∧ ((tail xs) = ys)) → ((∃ res_0 : Bool, ((sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res))))) → (sorted l res)))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
 
-        test_helpers::validate_axioms(parsed_nodes, axioms);
-    }
-
-    #[test]
-    fn test_sorted_2_axiom_structure() {
-        let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons { head = x; tail = xs } -> match xs with | Nil -> true | Cons { head = y; tail = ys } -> (x <= y) && sorted xs";
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
-
-        let expected = "theorem sorted_2 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, ((sorted l res) → (((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) → (((is_cons xs) ∧ ((head xs) = y) ∧ ((tail xs) = ys)) → (∃ res_0 : Bool, ((sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res)))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
-        assert_axiom_lean_output(&axioms, &[("sorted_2", expected)]);
-
-        test_helpers::validate_axioms(parsed_nodes, axioms);
-    }
-
-    #[test]
-    fn test_sorted_2_rev_axiom_structure() {
-        let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons { head = x; tail = xs } -> match xs with | Nil -> true | Cons { head = y; tail = ys } -> (x <= y) && sorted xs";
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
-
-        let expected = "theorem sorted_2_rev : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res : Bool, (((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) → (((is_cons xs) ∧ ((head xs) = y) ∧ ((tail xs) = ys)) → ((∃ res_0 : Bool, ((sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res))))) → (sorted l res)))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros l\ncases l with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
-        assert_axiom_lean_output(&axioms, &[("sorted_2_rev", expected)]);
+        assert_axiom_lean_output(
+            &axioms,
+            &[
+                ("sorted_1_fwd_pattern", sorted_1_fwd_pattern_expected),
+                ("sorted_2", sorted_2_expected),
+                ("sorted_2_rev", sorted_2_rev_expected),
+            ],
+        );
 
         test_helpers::validate_axioms(parsed_nodes, axioms);
     }
@@ -1055,25 +908,6 @@ mod tests {
         test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
-    // TODO: Use this more often
-    /// Assert that axioms with given names match expected Lean output
-    fn assert_axiom_lean_output(axioms: &[Axiom], expectations: &[(&str, &str)]) {
-        for (expected_name, expected_lean) in expectations {
-            let axiom = axioms
-                .iter()
-                .find(|a| &a.name == expected_name)
-                .unwrap_or_else(|| panic!("{} axiom should exist", expected_name));
-
-            let actual_lean = axiom.to_lean();
-            assert_eq!(
-                actual_lean.trim(),
-                expected_lean.trim(),
-                "{} axiom has incorrect structure",
-                expected_name
-            );
-        }
-    }
-
     #[test]
     fn test_len_1_axiom_structure() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = x; tail = xs } -> 1 + len xs";
@@ -1098,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn test_lazy_existential_placement_in_height_axiom() {
+    fn test_height_existential_scoping_and_structures() {
         use crate::axiom_generator::AxiomGenerator;
 
         let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }\nlet [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> ite (height l > height r) (1 + height l) (1 + height r)";
@@ -1118,153 +952,23 @@ mod tests {
 
         let axioms = builder.exported_axioms().expect("Failed to export axioms");
 
-        let height_1 = axioms
-            .iter()
-            .find(|a| a.name == "height_1")
-            .expect("height_1 axiom should exist");
+        let height_1_expected = "theorem height_1 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, ((height t res) → (((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) → (∃ res_0 : Int, ((∃ res_1 : Int, ((height l res_0) ∧ (height r res_1) ∧ (res_0 > res_1))) → ((height l res_0) → ((1 + res_0) = res)))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
 
-        let lean_output = height_1.to_lean();
+        let height_1_fwd_pattern_expected = "theorem height_1_fwd_pattern : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, (∃ res_0 : Int, ((∃ res_1 : Int, ((height l res_0) ∧ (height r res_1) ∧ (res_0 > res_1))) → (((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) → ((height t res) → ((height l res_0) ∧ ((1 + res_0) = res)))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
 
-        let expected = "theorem height_1 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, ((height t res) → (((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) → (∃ res_0 : Int, ((∃ res_1 : Int, ((height l res_0) ∧ (height r res_1) ∧ (res_0 > res_1))) → ((height l res_0) → ((1 + res_0) = res)))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
+        let height_2_rev_expected = "theorem height_2_rev : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, (((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) → (∃ res_0 : Int, (∃ res_1 : Int, ((((height l res_0) ∧ (height r res_1) ∧ ¬((res_0 > res_1))) ∧ (height r res_1)) → (((1 + res_1) = res) → (height t res)))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
 
-        assert_eq!(
-            lean_output.trim(),
-            expected.trim(),
-            "height_1 axiom structure (grouped condition atoms).\n\
-             With grouped conditions: both res_0 and res_1 are quantified together since they appear in same conjunction."
+        let height_2_fwd_pattern_expected = "theorem height_2_fwd_pattern : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, (∃ res_0 : Int, (∃ res_1 : Int, (((height l res_0) ∧ (height r res_1) ∧ ¬((res_0 > res_1))) → (((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) → ((height t res) → ((height r res_1) ∧ ((1 + res_1) = res))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
+
+        assert_axiom_lean_output(
+            &axioms,
+            &[
+                ("height_1", height_1_expected),
+                ("height_1_fwd_pattern", height_1_fwd_pattern_expected),
+                ("height_2_rev", height_2_rev_expected),
+                ("height_2_fwd_pattern", height_2_fwd_pattern_expected),
+            ],
         );
-
-        // Verify forward-pattern axiom has correct existential scoping
-        let height_1_fwd_pattern = axioms
-            .iter()
-            .find(|a| a.name == "height_1_fwd_pattern")
-            .expect("height_1_fwd_pattern axiom should exist");
-
-        let lean_output = height_1_fwd_pattern.to_lean();
-        let expected = "theorem height_1_fwd_pattern : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, (∃ res_0 : Int, ((∃ res_1 : Int, ((height l res_0) ∧ (height r res_1) ∧ (res_0 > res_1))) → (((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) → ((height t res) → ((height l res_0) ∧ ((1 + res_0) = res)))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
-
-        assert_eq!(lean_output.trim(), expected.trim());
-
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        builder
-            .validate_with_lean(parsed_nodes, &type_constructors)
-            .expect("Failed to validate axioms with Lean");
-    }
-
-    #[test]
-    fn test_height_2_and_height_2_fwd_pattern_structure() {
-        use crate::axiom_generator::AxiomGenerator;
-
-        let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }\nlet [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> ite (height l > height r) (1 + height l) (1 + height r)";
-
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let height_fn = test_helpers::find_function(&parsed_nodes, "height");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
-
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&height_fn)
-            .expect("Failed to prepare height");
-
-        let builder = generator
-            .build_all()
-            .with_proof(|a| a.suggest_proof_tactic());
-
-        let axioms = builder.exported_axioms().expect("Failed to export axioms");
-
-        // Verify height_2_rev has correct structure
-        let height_2_rev = axioms
-            .iter()
-            .find(|a| a.name == "height_2_rev")
-            .expect("height_2_rev axiom should exist");
-
-        let lean_output = height_2_rev.to_lean();
-        // Updated expected: the antecedent now correctly groups conditions And[And[conditions], predicates]
-        // and the consequent chain is (result_eq → predicate)
-        let expected = "theorem height_2_rev : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, (((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) → (∃ res_0 : Int, (∃ res_1 : Int, ((((height l res_0) ∧ (height r res_1) ∧ ¬((res_0 > res_1))) ∧ (height r res_1)) → (((1 + res_1) = res) → (height t res)))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
-
-        assert_eq!(
-            lean_output.trim(),
-            expected.trim(),
-            "height_2_rev axiom should have the reverse implication structure with proper nesting"
-        );
-
-        // Verify height_2_fwd_pattern has correct structure
-        let height_2_fwd_pattern = axioms
-            .iter()
-            .find(|a| a.name == "height_2_fwd_pattern")
-            .expect("height_2_fwd_pattern axiom should exist");
-
-        let lean_output = height_2_fwd_pattern.to_lean();
-        let expected = "theorem height_2_fwd_pattern : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res : Int, (∃ res_0 : Int, (∃ res_1 : Int, (((height l res_0) ∧ (height r res_1) ∧ ¬((res_0 > res_1))) → (((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) → ((height t res) → ((height r res_1) ∧ ((1 + res_1) = res))))))) := by \ntry aesop (config := { maxRuleHeartbeats := 20000 })\nintros t\ncases t with\n| _ => \n  try simp_all; grind\n  try aesop\n  try grind\n";
-
-        assert_eq!(
-            lean_output.trim(),
-            expected.trim(),
-            "height_2_fwd_pattern axiom should have the forward pattern structure with pattern guard inside implication"
-        );
-
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        builder
-            .validate_with_lean(parsed_nodes, &type_constructors)
-            .expect("Failed to validate axioms with Lean");
-    }
-
-    #[test]
-    fn test_generate_axioms_from_height_and_complete_functions() {
-        use crate::axiom_generator::AxiomGenerator;
-
-        let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }\n\nlet [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> ite (height l > height r) (1 + height l) (1 + height r)\n\nlet [@simp] [@grind] rec complete (t : tree) : bool = match t with | Leaf -> true | Node { value = x; left = l; right = r } -> complete l && complete r && height l = height r";
-
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let height_fn = test_helpers::find_function(&parsed_nodes, "height");
-        let complete_fn = test_helpers::find_function(&parsed_nodes, "complete");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
-
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&height_fn)
-            .expect("Failed to prepare height");
-        generator
-            .prepare_function(&complete_fn)
-            .expect("Failed to prepare complete");
-
-        let builder = generator
-            .build_all()
-            .with_proof(|a| a.suggest_proof_tactic());
-
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        builder
-            .validate_with_lean(parsed_nodes, &type_constructors)
-            .expect("Failed to validate axioms with Lean");
-    }
-
-    #[test]
-    fn test_generate_axioms_from_bst_functions() {
-        use crate::axiom_generator::AxiomGenerator;
-
-        let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }\n\n    let [@simp] [@grind] rec lower_bound (t : tree) (x : int) : bool =\n  match t with\n  | Leaf -> true\n  | Node { value = y; left = l; right = r } -> x <= y && lower_bound l x && lower_bound r x\n\n    let [@simp] [@grind] rec upper_bound (t : tree) (x : int) : bool =\n  match t with\n  | Leaf -> true\n  | Node { value = y; left = l; right = r } -> y <= x && upper_bound l x && upper_bound r x\n\n    let [@simp] [@grind] rec bst (t : tree) : bool =\n  match t with\n  | Leaf -> true\n  | Node { value = x; left = l; right = r } -> bst l && bst r && upper_bound l x && lower_bound r x";
-
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let lower_bound_fn = test_helpers::find_function(&parsed_nodes, "lower_bound");
-        let upper_bound_fn = test_helpers::find_function(&parsed_nodes, "upper_bound");
-        let bst_fn = test_helpers::find_function(&parsed_nodes, "bst");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
-
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&lower_bound_fn)
-            .expect("Failed to prepare lower_bound");
-        generator
-            .prepare_function(&upper_bound_fn)
-            .expect("Failed to prepare upper_bound");
-        generator
-            .prepare_function(&bst_fn)
-            .expect("Failed to prepare bst");
-
-        let builder = generator
-            .build_all()
-            .with_proof(|a| a.suggest_proof_tactic());
 
         parsed_nodes = crate::wrap_all_functions(parsed_nodes);
         builder
@@ -1292,7 +996,6 @@ mod tests {
 
         let axioms = builder.exported_axioms().expect("Failed to export axioms");
 
-        // len has both zero (base case) and addition patterns, so domain axiom should be generated
         let domain_axiom = axioms
             .iter()
             .find(|a| a.name == "len_geq_0")
@@ -1310,7 +1013,6 @@ mod tests {
     fn test_domain_axiom_not_generated_without_patterns() {
         use crate::axiom_generator::AxiomGenerator;
 
-        // all_eq function: has addition (&&) but no literal zero, so should NOT get domain axiom
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons { head = h; tail = t } -> (h = x) && all_eq t x";
         let mut parsed_nodes = test_helpers::parse_program(program_str);
         let all_eq_fn = test_helpers::find_function(&parsed_nodes, "all_eq");
@@ -1327,7 +1029,6 @@ mod tests {
 
         let axioms = builder.exported_axioms().expect("Failed to export axioms");
 
-        // all_eq returns bool, so no domain axiom should be generated
         let domain_axiom_count = axioms.iter().filter(|a| a.is_domain_specific()).count();
         assert_eq!(
             domain_axiom_count, 0,
@@ -1362,7 +1063,6 @@ mod tests {
             .generate_all()
             .expect("Failed to generate all axioms");
 
-        // Verify height_geq_0 domain axiom exists
         all_axioms
             .iter()
             .find(|a| a.name == "height_geq_0")
