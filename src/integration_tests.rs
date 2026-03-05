@@ -32,9 +32,7 @@ mod integration_tests {
         all_nodes = crate::wrap_all_functions(all_nodes);
 
         // Build all axioms at once
-        let builder = generator
-            .build_all()
-            .with_proof(|a| a.suggest_proof_tactic());
+        let builder = generator.build_all();
 
         // Validate through Lean backend
         builder

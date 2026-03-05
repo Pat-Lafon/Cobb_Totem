@@ -2,11 +2,14 @@ pub mod axiom_builder_state;
 pub mod axiom_generator;
 pub(crate) mod axiom_validation;
 pub(crate) mod create_wrapper;
+pub(crate) mod domain_axiom_builder;
+pub(crate) mod injectivity_checker;
 pub(crate) mod integration_tests;
 pub mod lean_backend;
 pub(crate) mod lean_validation;
 pub mod ocamlparser;
 pub mod prog_ir;
+pub(crate) mod proposition_transforms;
 pub mod spec_ir;
 
 use create_wrapper::create_and_wrap_predicate;
@@ -142,9 +145,7 @@ pub fn generate_and_validate_axioms(
     }
 
     let parsed_nodes = wrap_all_functions(parsed_nodes);
-    let builder = generator
-        .build_all()
-        .with_proof(|a| a.suggest_proof_tactic());
+    let builder = generator.build_all();
 
     // Validate through Lean backend with all axioms
     builder.validate_with_lean(parsed_nodes.clone(), &[type_decl])?;
@@ -258,9 +259,7 @@ pub(crate) mod test_helpers {
 
         // Build axioms with proof tactic
         // Return ALL axioms (exported + internal) so validation has complete context
-        let builder = generator
-            .build_all()
-            .with_proof(|a| a.suggest_proof_tactic());
+        let builder = generator.build_all();
         let axioms = builder
             .generate_all()
             .expect("Failed to generate all axioms");

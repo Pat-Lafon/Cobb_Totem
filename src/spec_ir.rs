@@ -247,26 +247,37 @@ impl Axiom {
         self
     }
 
-    /// Create an axiom with proof from components
-    pub(crate) fn with_proof<F>(
-        name: String,
-        params: Vec<Parameter>,
-        body: Proposition,
-        proof_fn: &F,
-    ) -> Axiom
-    where
-        F: Fn(&Axiom) -> String,
-    {
-        let mut axiom = Axiom {
+    /// Create a new axiom with the given name, parameters, and body.
+    pub(crate) fn new(name: String, params: Vec<Parameter>, body: Proposition) -> Self {
+        Axiom {
             name,
             params,
             body,
             proof: None,
             attributes: vec![],
             is_internal: false,
-        };
-        axiom.proof = Some(proof_fn(&axiom));
-        axiom
+        }
+    }
+
+    /// Set the proof using an automatically suggested tactic based on axiom characteristics.
+    pub(crate) fn with_suggested_proof(mut self) -> Self {
+        self.proof = Some(self.generate_proof_tactic());
+        self
+    }
+
+    /// Create an axiom with parameters built from a let binding.
+    pub(crate) fn from_let_binding(
+        name: String,
+        binding: &crate::prog_ir::LetBinding,
+        uni_params: &[Parameter],
+        body: Proposition,
+    ) -> Self {
+        let mut params = Parameter::from_vars(&binding.params);
+        params.extend_from_slice(uni_params);
+        params.push(Parameter::result(binding.return_type.clone().expect(
+            "return_type must be Some after prepare_function validation",
+        )));
+        Self::new(name, params, body)
     }
 
     /// Count existential quantifiers in the proposition body
@@ -285,9 +296,7 @@ impl Axiom {
         }
     }
 
-    /// Suggests an appropriate proof tactic based on axiom characteristics.
-    /// Uses case analysis for axioms with recursive predicates, simple tactics otherwise.
-    pub fn suggest_proof_tactic(&self) -> String {
+    pub(crate) fn generate_proof_tactic(&self) -> String {
         // Count existential quantifiers in the body
         let existential_count = Self::count_existentials_in_body(&self.body);
 
@@ -543,6 +552,23 @@ impl Proposition {
             }
             vars
         })
+    }
+
+    /// Build a relation predicate from function inputs and a result variable
+    ///
+    /// For example, with function `len(l)` and result param `res`:
+    /// Produces `Predicate("len", [Variable("l"), Variable("res")])`
+    pub(crate) fn build_relation_predicate(
+        binding: &crate::prog_ir::LetBinding,
+        result_param: &str,
+    ) -> Proposition {
+        let mut args = binding
+            .params
+            .iter()
+            .map(|p| Expression::Variable(p.0.clone()))
+            .collect::<Vec<_>>();
+        args.push(Expression::Variable(VarName(result_param.to_string())));
+        Proposition::Predicate(binding.name.0.clone(), args)
     }
 }
 
@@ -1814,5 +1840,46 @@ let [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Ni
             display_output,
             "let[@axiom] tree_leaf_depth_0_disjoint (l : tree) ((n [@exists]) : int) = (((depth l n) && (n)#==(0) && (leaf l)) || ((depth l n) && (n > 0) && (not ((leaf l)))))"
         );
+    }
+
+    #[test]
+    fn test_build_relation_predicate_includes_result_param() {
+        use crate::prog_ir::Type;
+
+        let binding = crate::prog_ir::LetBinding {
+            name: crate::VarName("len".into()),
+            params: vec![
+                (crate::VarName("l".into()), Type::Int),
+                (crate::VarName("x".into()), Type::Bool),
+            ],
+            body: crate::prog_ir::Expression::Literal(crate::Literal::Int(0)),
+            return_type: Some(Type::Int),
+            attributes: vec![],
+            is_recursive: false,
+            termination_proof: None,
+        };
+
+        let pred = Proposition::build_relation_predicate(&binding, "res");
+
+        match pred {
+            Proposition::Predicate(name, args) => {
+                assert_eq!(name, "len", "Predicate name should match function name");
+                assert_eq!(
+                    args.len(),
+                    3,
+                    "Should have input params (l, x) plus result param"
+                );
+                // Verify the last argument is the result variable
+                if let Expression::Variable(res_name) = &args[2] {
+                    assert_eq!(
+                        res_name.0, "res",
+                        "Last argument should be result parameter"
+                    );
+                } else {
+                    panic!("Expected result parameter to be a variable");
+                }
+            }
+            _ => panic!("Expected predicate, got different proposition type"),
+        }
     }
 }
