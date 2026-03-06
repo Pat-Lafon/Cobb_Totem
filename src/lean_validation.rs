@@ -69,7 +69,7 @@ pub(crate) fn validate_lean_code(code: &str) -> Result<(), String> {
 }
 
 /// Print generated Lean code for debugging
-pub(crate) fn debug_print_lean(code: &str) {
+fn debug_print_lean(code: &str) {
     // Limit output to prevent spam from very large code
     const MAX_DEBUG_LINES: usize = 1000;
     let line_count = code.lines().count();

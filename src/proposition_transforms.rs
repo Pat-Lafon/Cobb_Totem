@@ -6,7 +6,7 @@ use crate::prog_ir::BinaryOp;
 use crate::spec_ir::{Expression, Proposition};
 
 /// Convert boolean equality A == B to biconditional: (A && B) || (!A && !B)
-pub(crate) fn boolean_equality_to_biconditional(
+fn boolean_equality_to_biconditional(
     left: Expression,
     right: Expression,
 ) -> Proposition {
@@ -59,7 +59,7 @@ fn wrap_remaining_existentials(
 }
 
 /// Strengthen implications to conjunctions when both sides reference the given parameter
-pub(crate) fn strengthen_implication_in_scope(
+fn strengthen_implication_in_scope(
     param_name: &VarName,
     prop: Proposition,
 ) -> Proposition {
