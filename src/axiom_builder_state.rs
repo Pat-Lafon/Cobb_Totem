@@ -145,7 +145,7 @@ impl AxiomBuilderState {
     ) -> Option<Axiom> {
         // Guard: verify this specific base case has an injective output
         // Requires: (1) non-boolean return type, (2) non-negativity pattern (zero + addition),
-        // (3) extractable literal output
+        // (3) extract-able literal output
         if !injectivity_checker::verify_base_case_is_injective(binding, body_prop) {
             return None;
         }
@@ -188,7 +188,7 @@ impl AxiomBuilderState {
         ))
     }
 
-    /// Build forward-pattern axiom: generated only when pattern constraints are non-empty
+    /// Build forward-pattern axiom: generated only when pattern constraints are nonempty
     fn build_fwd_pattern_axiom(
         &self,
         binding: &LetBinding,
