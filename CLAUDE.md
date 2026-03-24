@@ -58,23 +58,32 @@ Tests are in `/tests/integration_tests.rs` (end-to-end) and unit tests within ea
 
 Example files in `/examples/`: `list_len.ml`, `list_sorted.ml`, `bst.ml`, `rbtree.ml`, `tree_height.ml`, `tree_complete.ml`
 
-## Agent Rules (from AGENTS.md)
+## Guidelines
 
-**Error Handling:**
-- Use `panic!()` for parser invariant violations
-- Always include underlying error messages in panics
-- Never create dummy nodes or placeholder values as fallbacks
+### Visibility
+- Prefer private > `pub(crate)` > `pub`
+- `pub` only for public API: core domain types (`Axiom`, `Parameter`, `Proposition`, `Expression`, `Type`, `LetBinding`, `TypeDecl`) and top-level traits (`ToLean`)
+- `pub(crate)` for internal cross-module items (builders, utilities, helper types)
+- When the compiler warns about unused `pub(crate)` items, remove them — never use `#[allow(dead_code)]`
 
-**Testing:**
+### Function Design
+- Avoid thin wrapper functions that just delegate without adding logic, validation, or abstraction
+- Only keep wrappers that provide semantic boundaries, add error handling, or significantly reduce duplication
+
+### Error Handling
+- Use `panic!()` for parser invariant violations with descriptive messages
+- Always include underlying error messages: `panic!("Failed to parse: {}", e)`
+- Never create dummy nodes or placeholder values (e.g., `Expression::Variable("")`); use `unimplemented!()` with a message instead
+- Never silently discard return values with `let _ = result;`
+
+### Testing
 - Tests must make assertions, not just print output
-- Use `assert_eq!()` for string comparisons, not multiple `contains()` checks
-- Use precise assertions with exact values, not inequalities
-- Test observable behavior (e.g., `axiom.to_lean()` output), not just names
-- Never suppress error messages - use `.unwrap_or_else(|e| panic!(...))` to include error details
+- Use `assert_eq!()` for exact string comparisons, never `assert!(string.contains(...))`
+- Use precise assertions with exact values, not inequalities like `assert!(value >= expected)`
+- Test observable behavior (e.g., `axiom.to_lean()` output), not just names or structure
+- Never suppress error messages — use `.unwrap_or_else(|e| panic!(...))` to include error details
+- Remove debug/investigation tests after development
+- Never create temporary/debug files; use tests within modules to explore functionality
 
-**Git:**
-- Do not use git commands - user manages version control
-
-**Files:**
-- Never create temporary/debug files
-- Use tests within modules to explore functionality
+### Git
+- Do not use git commands — user manages version control
