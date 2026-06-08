@@ -33,10 +33,11 @@ mod integration_tests {
 
         // Build all axioms at once
         let builder = generator.build_all();
+        let axioms = builder.generate_all();
 
         // Validate through Lean backend
         builder
-            .validate_with_lean(all_nodes.clone(), &type_decls)
+            .validate_with_lean(axioms, all_nodes.clone(), &type_decls)
             .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
     }
 

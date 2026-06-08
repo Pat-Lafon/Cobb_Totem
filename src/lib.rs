@@ -3,7 +3,6 @@ pub mod axiom_generator;
 pub(crate) mod axiom_validation;
 pub(crate) mod create_wrapper;
 pub(crate) mod domain_axiom_builder;
-pub(crate) mod injectivity_checker;
 pub(crate) mod integration_tests;
 pub mod lean_backend;
 pub(crate) mod lean_validation;
@@ -147,11 +146,9 @@ pub fn generate_and_validate_axioms(
     let parsed_nodes = wrap_all_functions(parsed_nodes);
     let builder = generator.build_all();
 
-    // Validate through Lean backend with all axioms
-    builder.validate_with_lean(parsed_nodes.clone(), &[type_decl])?;
-
-    // Export the public axioms
-    let axioms = builder.exported_axioms()?;
+    let all_axioms = builder.generate_all();
+    builder.validate_with_lean(all_axioms.clone(), parsed_nodes.clone(), &[type_decl])?;
+    let axioms = axiom_builder_state::AxiomBuilderState::exported_axioms(&all_axioms);
 
     Ok((parsed_nodes, axioms))
 }
@@ -214,8 +211,9 @@ pub(crate) mod test_helpers {
         generator
             .get_prepared()
             .iter()
-            .flat_map(|(_, props)| {
-                props
+            .flat_map(|prepared| {
+                prepared
+                    .body_propositions
                     .iter()
                     .map(|axiom| {
                         let mut all_body_steps = axiom.body_steps.clone();
@@ -260,9 +258,7 @@ pub(crate) mod test_helpers {
         // Build axioms with proof tactic
         // Return ALL axioms (exported + internal) so validation has complete context
         let builder = generator.build_all();
-        let axioms = builder
-            .generate_all()
-            .expect("Failed to generate all axioms");
+        let axioms = builder.generate_all();
 
         (parsed_nodes, axioms)
     }

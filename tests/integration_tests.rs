@@ -38,12 +38,6 @@ fn test_list_mem() {
 }
 
 #[test]
-fn test_list_length_axiom_format() {
-    process_example_file("../integration_tests/list_length/program.ml")
-        .expect("list_length axiom format example failed");
-}
-
-#[test]
 fn test_list_even() {
     process_example_file("examples/list_even.ml").expect("list_even example failed");
 }

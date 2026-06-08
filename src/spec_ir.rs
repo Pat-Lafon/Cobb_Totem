@@ -265,18 +265,17 @@ impl Axiom {
         self
     }
 
-    /// Create an axiom with parameters built from a let binding.
+    /// Create an axiom with parameters built from a let binding and an explicit result type.
     pub(crate) fn from_let_binding(
         name: String,
         binding: &crate::prog_ir::LetBinding,
+        return_type: crate::prog_ir::Type,
         uni_params: &[Parameter],
         body: Proposition,
     ) -> Self {
         let mut params = Parameter::from_vars(&binding.params);
         params.extend_from_slice(uni_params);
-        params.push(Parameter::result(binding.return_type.clone().expect(
-            "return_type must be Some after prepare_function validation",
-        )));
+        params.push(Parameter::result(return_type));
         Self::new(name, params, body)
     }
 
@@ -363,13 +362,11 @@ impl ToLean for Axiom {
             Some(p) => format!("by {}", p),
         };
 
-        // Add attributes if present
         let attrs_str = if self.attributes.is_empty() {
             String::new()
         } else {
             format!("@[{}] ", self.attributes.join(", "))
         };
-
         format!(
             "{}theorem {} : {} := {}",
             attrs_str, self.name, theorem_statement, proof
@@ -444,12 +441,13 @@ impl Proposition {
     }
 
     /// Create a conjunction from propositions if there are multiple, otherwise return the single proposition.
-    /// Useful for building AND constraints that may only have one element.
+    /// Panics on empty input: an empty `And` is vacuously true and would make any antecedent that uses it
+    /// admit every result, breaking determinism downstream.
     pub(crate) fn optional_conjunction(propositions: Vec<Proposition>) -> Proposition {
-        if propositions.len() == 1 {
-            propositions.into_iter().next().unwrap()
-        } else {
-            Proposition::And(propositions)
+        match propositions.len() {
+            0 => panic!("Proposition::optional_conjunction called with no propositions"),
+            1 => propositions.into_iter().next().unwrap(),
+            _ => Proposition::And(propositions),
         }
     }
 

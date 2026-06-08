@@ -81,53 +81,6 @@ pub(crate) fn generate(binding: &LetBinding) -> Vec<Axiom> {
             first_param_name, impl_name, first_param_name
         ));
         domain_axioms.push(axiom);
-
-        // Generate derived lemma: ¬((func_impl params...) = -1)
-        // Example: from len_geq_0, generate len_impl_ne_negSucc
-        let derived_params: Vec<Parameter> = binding
-            .params
-            .iter()
-            .map(|(name, typ)| Parameter::universal(name.clone(), typ.clone()))
-            .collect();
-
-        // Build function call to the impl function: (impl_name param)
-        // Since we only handle single-parameter measures here, this is straightforward
-        let param_var = crate::spec_ir::Expression::Variable(binding.params[0].0.clone());
-        let impl_call =
-            crate::spec_ir::Expression::FieldAccess(impl_name.clone(), Box::new(param_var));
-
-        let derived_body = Proposition::Not(Box::new(Proposition::Expr(
-            crate::spec_ir::Expression::BinaryOp(
-                Box::new(impl_call),
-                BinaryOp::Eq,
-                Box::new(crate::spec_ir::Expression::Literal(crate::Literal::Int(-1))),
-            ),
-        )));
-
-        let mut derived_axiom = Axiom {
-            name: format!("{}_impl_ne_negSucc", binding.name.0),
-            params: derived_params,
-            body: derived_body,
-            proof: None,
-            attributes: vec!["simp".to_string(), "grind".to_string()],
-            is_internal: true,
-        };
-
-        // Build proof that references all parameters to the domain axiom
-        let geq_0_name = format!("{}{}", binding.name, DOMAIN_AXIOM_SUFFIX);
-        let all_param_names = binding
-            .params
-            .iter()
-            .map(|(name, _)| name.0.clone())
-            .collect::<Vec<_>>()
-            .join(" ");
-        let intro_names = format!("intros {}", all_param_names);
-        let domain_axiom_call = format!("{} {}", geq_0_name, all_param_names);
-        derived_axiom.proof = Some(format!(
-            "\n{}\nhave h := {}\ngrind",
-            intro_names, domain_axiom_call
-        ));
-        domain_axioms.push(derived_axiom);
     }
 
     domain_axioms

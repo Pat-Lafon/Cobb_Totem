@@ -3,10 +3,14 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 use crate::VarName;
-use crate::axiom_builder_state::{AxiomBuilderState, BodyPropositionData};
+use crate::axiom_builder_state::{AxiomBuilderState, BodyPropositionData, PreparedBinding};
 use crate::create_wrapper::RESULT_PARAM;
 use crate::prog_ir::{LetBinding, Type, TypeDecl};
 use crate::spec_ir::{Expression, Parameter, Proposition};
+
+/// Names reserved by axiom builders (result and the two operands of the functional axiom).
+/// A user-supplied param name colliding with one of these would produce a duplicate quantifier.
+const RESERVED_BINDER_NAMES: &[&str] = &[RESULT_PARAM, "r1", "r2"];
 
 /// Cache key for function applications - combines function name and argument expressions
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -37,7 +41,7 @@ pub struct AxiomGenerator {
     /// Map of function names to their return types
     function_types: HashMap<VarName, Type>,
     /// Accumulated functions and their body propositions
-    prepared: Vec<(LetBinding, Vec<BodyPropositionData>)>,
+    prepared: Vec<PreparedBinding>,
 }
 
 impl AxiomGenerator {
@@ -89,7 +93,7 @@ impl AxiomGenerator {
 
     #[cfg(test)]
     /// Get the prepared functions and their body propositions (test only)
-    pub(crate) fn get_prepared(&self) -> &[(LetBinding, Vec<BodyPropositionData>)] {
+    pub(crate) fn get_prepared(&self) -> &[PreparedBinding] {
         &self.prepared
     }
 
@@ -432,16 +436,28 @@ impl AxiomGenerator {
 
     /// Prepare a function for batch axiom generation
     pub fn prepare_function(&mut self, binding: &LetBinding) -> Result<(), String> {
-        // Validate that binding has a return type annotation
-        if binding.return_type.is_none() {
-            return Err(format!(
+        let return_type = binding.return_type.clone().ok_or_else(|| {
+            format!(
                 "Function '{}' must have an explicit return type annotation",
                 binding.name
-            ));
+            )
+        })?;
+
+        // Reject user params that shadow reserved binder names; axiom builders push these as outer
+        // universals, and a collision would produce a duplicate quantifier in the emitted axiom.
+        for (param_name, _) in &binding.params {
+            if RESERVED_BINDER_NAMES.contains(&param_name.0.as_str()) {
+                return Err(format!(
+                    "Function '{}' parameter '{}' shadows a reserved axiom binder ({}); rename the parameter",
+                    binding.name,
+                    param_name,
+                    RESERVED_BINDER_NAMES.join(", "),
+                ));
+            }
         }
 
         self.function_types
-            .insert(binding.name.clone(), binding.return_type.clone().unwrap());
+            .insert(binding.name.clone(), return_type.clone());
 
         // Create a fresh cache for this axiom's analysis
         let mut cache = HashMap::new();
@@ -453,7 +469,11 @@ impl AxiomGenerator {
             .map(|body_prop| self.wrap_body_proposition_steps(body_prop))
             .collect();
 
-        self.prepared.push((binding.clone(), body_propositions));
+        self.prepared.push(PreparedBinding {
+            binding: binding.clone(),
+            return_type,
+            body_propositions,
+        });
         Ok(())
     }
 
@@ -757,8 +777,8 @@ impl AxiomGenerator {
 
     /// Build a configured AxiomBuilderState from all prepared functions
     /// The builder contains the prepared functions and can be used to generate axioms
-    pub fn build_all(&self) -> AxiomBuilderState {
-        AxiomBuilderState::new(self.type_constructors.clone(), self.prepared.clone())
+    pub(crate) fn build_all(&self) -> AxiomBuilderState {
+        AxiomBuilderState::new(self.prepared.clone())
     }
 }
 
