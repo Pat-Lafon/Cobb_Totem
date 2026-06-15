@@ -139,11 +139,6 @@ impl Parameter {
             .map(|(name, typ)| Parameter::universal(name.clone(), typ.clone()))
             .collect()
     }
-
-    /// Create the standard result parameter for an axiom
-    pub(crate) fn result(typ: Type) -> Self {
-        Parameter::universal(RESULT_PARAM, typ)
-    }
 }
 
 impl From<String> for Expression {
@@ -271,60 +266,23 @@ impl Axiom {
         binding: &crate::prog_ir::LetBinding,
         return_type: crate::prog_ir::Type,
         uni_params: &[Parameter],
+        result_param: &str,
         body: Proposition,
     ) -> Self {
         let mut params = Parameter::from_vars(&binding.params);
         params.extend_from_slice(uni_params);
-        params.push(Parameter::result(return_type));
+        params.push(Parameter::universal(result_param, return_type));
         Self::new(name, params, body)
     }
 
-    /// Count existential quantifiers in the proposition body
-    fn count_existentials_in_body(prop: &Proposition) -> usize {
-        match prop {
-            Proposition::Existential(_, body) => 1 + Self::count_existentials_in_body(body),
-            Proposition::Implication(p, q)
-            | Proposition::Or(p, q)
-            | Proposition::Iff(p, q)
-            | Proposition::Equality(p, q) => {
-                Self::count_existentials_in_body(p) + Self::count_existentials_in_body(q)
-            }
-            Proposition::And(props) => props.iter().map(Self::count_existentials_in_body).sum(),
-            Proposition::Not(p) => Self::count_existentials_in_body(p),
-            _ => 0,
-        }
-    }
-
     pub(crate) fn generate_proof_tactic(&self) -> String {
-        // Count existential quantifiers in the body
-        let existential_count = Self::count_existentials_in_body(&self.body);
-
-        if existential_count > 0 {
-            // For axioms with existentials, use case analysis on the main data structure parameter.
-            // Find the first non-primitive (Named) type parameter
-            let cases_param = self
-                .params
-                .iter()
-                .find(|p| matches!(p.typ, Type::Named(_) | Type::Int))
-                .map(|p| p.name.0.clone())
-                .expect("Axioms with existentials must have a named/inductive type parameter");
-
-            let mut tactic = "\ntry aesop (config := { maxRuleHeartbeats := 20000 })\n".to_string();
-
-            // Introduce the main data structure parameter for case analysis
-            tactic.push_str(&format!("intros {}\n", cases_param));
-            // Use cases instead of induction
-            tactic.push_str(&format!("cases {} with\n", cases_param));
-            // Use generic patterns without hardcoding Nil/Cons
-            tactic.push_str("| _ => \n");
-            tactic.push_str("  try simp_all; grind\n");
-            tactic.push_str("  try aesop\n");
-            tactic.push_str("  try grind\n");
-
-            tactic
-        } else {
-            "grind".to_string()
-        }
+        // All axioms are discharged by the shared `prove_axiom` tactic
+        // (`lean/ProofAutomation/ProveAxiom.lean`), which subsumes the former
+        // per-axiom `grind` / `try aesop` + case-analysis strategies and adds
+        // twin-fact grind patterns for inductive-converse (Class B) axioms.
+        // Existential-witness (Class D) axioms fail loudly here by design until
+        // `prove_axiom` gains witness support.
+        "prove_axiom".to_string()
     }
 }
 

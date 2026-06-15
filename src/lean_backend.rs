@@ -208,15 +208,20 @@ impl LeanContextBuilder {
 
     /// Build the final Lean code
     pub fn build(self) -> String {
-        // Check if any axiom uses the aesop tactic
-        let needs_aesop = self
+        // Any axiom with a real (non-`sorry`) proof is discharged by `prove_axiom`
+        // from `ProofAutomation.ProveAxiom`, so the generated file must import it;
+        // `grind` was built-in and needed no import. Both directions (import present
+        // iff some axiom has a real proof) are pinned by
+        // `test_build_imports_prove_axiom_for_real_proof` /
+        // `test_build_omits_prove_axiom_for_sorry_only`.
+        let needs_prove_axiom = self
             .axioms
             .iter()
-            .any(|axiom| axiom.proof.as_ref().is_some_and(|s| s.contains("aesop")));
+            .any(|axiom| axiom.proof.as_deref().is_some_and(|s| s != "sorry"));
 
         let mut output = String::new();
-        if needs_aesop {
-            output.push_str("import Aesop\n\n");
+        if needs_prove_axiom {
+            output.push_str("import ProofAutomation.ProveAxiom\n\n");
         }
 
         // Add attribute directives
@@ -265,9 +270,23 @@ mod tests {
         VarName,
         lean_validation::validate_lean_code,
         prog_ir::{Type, TypeDecl, Variant},
+        spec_ir::{Axiom, Expression as SpecExpression, Parameter, Proposition},
     };
 
     use super::*;
+
+    /// Minimal single-predicate axiom over `ilist`, used to exercise the
+    /// `build()` import logic without standing up a full prelude.
+    fn create_trivial_axiom(name: &str) -> Axiom {
+        Axiom::new(
+            name.to_string(),
+            vec![Parameter::universal("l", Type::Named("ilist".to_string()))],
+            Proposition::Predicate(
+                "is_nil".to_string(),
+                vec![SpecExpression::Variable("l".into())],
+            ),
+        )
+    }
 
     fn create_ilist_type() -> TypeDecl {
         TypeDecl {
@@ -494,5 +513,38 @@ mod tests {
                 e
             )
         });
+    }
+
+    /// A real (non-`sorry`) proof is discharged by `prove_axiom`, so the
+    /// generated file must import `ProofAutomation.ProveAxiom`. Removing the
+    /// import emission in `build()` makes this fail.
+    #[test]
+    fn test_build_imports_prove_axiom_for_real_proof() {
+        let axiom = create_trivial_axiom("ax_real").with_suggested_proof();
+        assert_eq!(
+            axiom.proof.as_deref(),
+            Some("prove_axiom"),
+            "suggested proof should be the real prove_axiom tactic, not sorry"
+        );
+
+        let lean_code = LeanContextBuilder::new().with_axioms(vec![axiom]).build();
+        assert!(
+            lean_code.contains("import ProofAutomation.ProveAxiom"),
+            "an axiom with a real proof must pull in the prove_axiom import; got:\n{lean_code}"
+        );
+    }
+
+    /// A `sorry`-only axiom set needs no prover, so the import must be absent —
+    /// otherwise generated files would carry a dead import.
+    #[test]
+    fn test_build_omits_prove_axiom_for_sorry_only() {
+        let mut axiom = create_trivial_axiom("ax_sorry");
+        axiom.proof = Some("sorry".to_string());
+
+        let lean_code = LeanContextBuilder::new().with_axioms(vec![axiom]).build();
+        assert!(
+            !lean_code.contains("import ProofAutomation.ProveAxiom"),
+            "a sorry-only axiom set must not import prove_axiom; got:\n{lean_code}"
+        );
     }
 }

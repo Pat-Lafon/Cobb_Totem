@@ -69,17 +69,9 @@ pub(crate) fn generate(binding: &LetBinding) -> Vec<Axiom> {
             is_internal: false,
         };
 
-        // Use fun_induction tactic on the first (structural) parameter
-        let first_param_name = binding
-            .params
-            .first()
-            .map(|(name, _)| name.0.clone())
-            .expect("Function must have at least one parameter to generate domain axiom");
-        let impl_name = format!("{}_impl", binding.name.0);
-        axiom.proof = Some(format!(
-            "\nintro {}\nfun_induction {} {} with grind",
-            first_param_name, impl_name, first_param_name
-        ));
+        // Discharge via the shared `prove_axiom` tactic; its early-induction +
+        // simp_all + grind strategy covers the former `fun_induction … with grind`.
+        axiom.proof = Some("prove_axiom".to_string());
         domain_axioms.push(axiom);
     }
 

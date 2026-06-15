@@ -3,14 +3,17 @@ use std::collections::HashMap;
 use itertools::Itertools;
 
 use crate::VarName;
-use crate::axiom_builder_state::{AxiomBuilderState, BodyPropositionData, PreparedBinding};
+use crate::axiom_builder_state::{
+    AxiomBuilderState, BodyPropositionData, DETERMINISM_PARAMS, PreparedBinding,
+};
 use crate::create_wrapper::RESULT_PARAM;
 use crate::prog_ir::{LetBinding, Type, TypeDecl};
 use crate::spec_ir::{Expression, Parameter, Proposition};
 
 /// Names reserved by axiom builders (result and the two operands of the functional axiom).
 /// A user-supplied param name colliding with one of these would produce a duplicate quantifier.
-const RESERVED_BINDER_NAMES: &[&str] = &[RESULT_PARAM, "r1", "r2"];
+const RESERVED_BINDER_NAMES: [&str; 3] =
+    [RESULT_PARAM, DETERMINISM_PARAMS[0], DETERMINISM_PARAMS[1]];
 
 /// Cache key for function applications - combines function name and argument expressions
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
