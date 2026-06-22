@@ -287,7 +287,6 @@ impl OcamlParser {
         result.attributes = attributes;
 
         // After parse_type_binding, cursor is at type_binding
-        // Verify no extra children after type_binding
         assert!(
             !cursor.goto_next_sibling(),
             "Unexpected children after type_binding"
@@ -353,7 +352,6 @@ impl OcamlParser {
             Self::restore_cursor(cursor, "variant_declaration");
         }
 
-        // Verify no extra children
         assert!(
             !cursor.goto_next_sibling(),
             "Unexpected children after variant_declaration"
@@ -1293,7 +1291,6 @@ impl OcamlParser {
 
         let body_node = cursor.node();
 
-        // Reject nested fun expressions - they're not currently supported
         if body_node.kind() == "fun_expression" {
             panic!(
                 "Nested fun expressions (e.g., 'fun x -> fun y -> body') are not supported. \

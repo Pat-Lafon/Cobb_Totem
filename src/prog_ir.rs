@@ -518,6 +518,7 @@ pub enum BinaryOp {
     Sub,
     Mul,
     Div,
+    Mod,
     Eq,
     Neq,
     Lt,
@@ -577,6 +578,7 @@ impl FromStr for BinaryOp {
             "-" => Ok(BinaryOp::Sub),
             "*" => Ok(BinaryOp::Mul),
             "/" => Ok(BinaryOp::Div),
+            "mod" => Ok(BinaryOp::Mod),
             "=" => Ok(BinaryOp::Eq),
             "==" => Err("Use '=' for equality, not '=='".to_string()),
             "<>" => Ok(BinaryOp::Neq),
@@ -598,6 +600,7 @@ impl fmt::Display for BinaryOp {
             BinaryOp::Sub => write!(f, "-"),
             BinaryOp::Mul => write!(f, "*"),
             BinaryOp::Div => write!(f, "/"),
+            BinaryOp::Mod => write!(f, "mod"),
             // TODO: Maybe we need to split this? need == for Ocaml axioms... I
             // think ocaml code is =
             BinaryOp::Eq => write!(f, "=="),
@@ -625,6 +628,7 @@ impl ToLean for BinaryOp {
             BinaryOp::Sub => "-".to_string(),
             BinaryOp::Mul => "*".to_string(),
             BinaryOp::Div => "/".to_string(),
+            BinaryOp::Mod => "%".to_string(),
             BinaryOp::And => "∧".to_string(),
             BinaryOp::Or => "∨".to_string(),
         }

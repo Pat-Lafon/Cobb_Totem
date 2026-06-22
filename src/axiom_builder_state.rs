@@ -22,7 +22,7 @@ pub(crate) struct BodyPropositionData {
 
 impl BodyPropositionData {
     /// Consume self and return the antecedent steps in order: input constraints, body steps, then
-    /// the optional `result = result_expr` step.
+    /// the `result = result_expr` step.
     fn into_steps(self) -> (Vec<Proposition>, Vec<Parameter>) {
         let BodyPropositionData {
             mut input_constraints,

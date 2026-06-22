@@ -83,6 +83,7 @@ impl ToLean for Expression {
                     BinaryOp::Sub => "-",
                     BinaryOp::Mul => "*",
                     BinaryOp::Div => "/",
+                    BinaryOp::Mod => "%",
                     BinaryOp::Eq => "==",
                     BinaryOp::Neq => "!=",
                     BinaryOp::Lt => "<",
