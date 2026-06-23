@@ -40,9 +40,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             totem/Cobb_Totem/target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('totem/Cobb_Totem/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-test-
 
       - name: Install elan (Lean version manager)
         run: |
@@ -62,9 +62,7 @@ jobs:
 
       - name: Setup Lean dependencies
         working-directory: totem/Cobb_Totem
-        run: |
-          lake update
-          lake build ProofAutomation.ProveAxiom
+        run: lake build ProofAutomation.ProveAxiom
 
       - name: Build
         working-directory: totem/Cobb_Totem
@@ -92,9 +90,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ runner.os }}-cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ runner.os }}-cargo-clippy-
 
       - name: Run clippy
         run: cargo clippy -- -D warnings
