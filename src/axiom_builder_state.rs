@@ -71,8 +71,10 @@ impl AxiomBuilderState {
         name: &VarName,
         idx: usize,
     ) -> (Vec<Parameter>, Proposition) {
-        let antecedent_vars: HashSet<VarName> =
-            antecedent.iter().flat_map(|p| p.collect_variables()).collect();
+        let antecedent_vars: HashSet<VarName> = antecedent
+            .iter()
+            .flat_map(|p| p.collect_variables())
+            .collect();
         assert!(
             !antecedent.is_empty(),
             "branch {idx} of `{name}` has an empty antecedent and cannot form an implication",
@@ -100,9 +102,12 @@ impl AxiomBuilderState {
             }
         }
 
-        let consequent = existentials.into_iter().rev().fold(consequent_inner, |acc, param| {
-            Proposition::Existential(param, Box::new(acc))
-        });
+        let consequent = existentials
+            .into_iter()
+            .rev()
+            .fold(consequent_inner, |acc, param| {
+                Proposition::Existential(param, Box::new(acc))
+            });
         let body = transform_and_equality(Proposition::Implication(
             Box::new(Proposition::optional_conjunction(antecedent)),
             Box::new(consequent),
@@ -169,10 +174,17 @@ impl AxiomBuilderState {
         );
 
         let mut params = Parameter::from_vars(&prepared.binding.params);
-        params.push(Parameter::universal(RESULT_PARAM, prepared.return_type.clone()));
+        params.push(Parameter::universal(
+            RESULT_PARAM,
+            prepared.return_type.clone(),
+        ));
         params.extend(structural_lifted);
 
-        Axiom::new(format!("{}_{}_fwd", prepared.binding.name, idx), params, body)
+        Axiom::new(
+            format!("{}_{}_fwd", prepared.binding.name, idx),
+            params,
+            body,
+        )
     }
 
     /// Functional (determinism) axiom: `∀ inputs, ∀ r1 r2, (pred inputs r1 ∧ pred inputs r2) → r1 = r2`.
@@ -215,23 +227,23 @@ impl AxiomBuilderState {
         Axiom::new(format!("{}_total", binding.name), params, body)
     }
 
-    /// TODO: Do we actually need this or can this be inlined away?
     /// One `_functional`, one `_total`, and two axioms per branch (an intro `{pred}_{idx}` and a
     /// forward-elimination `{pred}_{idx}_fwd`) for the given prepared binding.
     fn build_axioms_for(prepared: &PreparedBinding) -> Vec<Axiom> {
         let functional = Self::build_functional_axiom_for(prepared).with_suggested_proof();
         let total = Self::build_total_axiom_for(prepared).with_suggested_proof();
-        let branches = prepared
-            .body_propositions
-            .iter()
-            .enumerate()
-            .flat_map(|(idx, body_prop)| {
-                let intro = Self::build_branch_axiom_for(prepared, idx, body_prop.clone())
-                    .with_suggested_proof();
-                let fwd = Self::build_branch_elim_axiom_for(prepared, idx, body_prop.clone())
-                    .with_suggested_proof();
-                [intro, fwd]
-            });
+        let branches =
+            prepared
+                .body_propositions
+                .iter()
+                .enumerate()
+                .flat_map(|(idx, body_prop)| {
+                    let intro = Self::build_branch_axiom_for(prepared, idx, body_prop.clone())
+                        .with_suggested_proof();
+                    let fwd = Self::build_branch_elim_axiom_for(prepared, idx, body_prop.clone())
+                        .with_suggested_proof();
+                    [intro, fwd]
+                });
 
         [functional, total].into_iter().chain(branches).collect()
     }
@@ -249,7 +261,7 @@ impl AxiomBuilderState {
     fn regular_axioms(&self) -> Vec<Axiom> {
         self.prepared
             .iter()
-            .flat_map(|p| Self::build_axioms_for(p))
+            .flat_map(Self::build_axioms_for)
             .collect()
     }
 

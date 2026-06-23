@@ -664,8 +664,6 @@ impl OcamlParser {
         text.parse().expect("Failed to parse binary operator")
     }
 
-    /// Extract expressions from a comma-separated sequence within parentheses.
-    /// Precondition: cursor positioned at the opening "(" of a parenthesized list.
     /// Extract comma-separated expressions from a tuple_expression node.
     /// Precondition: node is a tuple_expression.
     /// Enforces pattern: expression (comma expression)*

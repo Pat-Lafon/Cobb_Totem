@@ -125,8 +125,8 @@ mod tests {
         };
 
         let axioms = generate(&binding);
-        // Body has literal zero but no addition, so it shouldn't pass the pattern check
-        // Result should be empty since has_non_negativity_pattern requires both zero and addition
+        // Body has a literal zero but no addition, so `generate` (which requires both
+        // contains_literal_zero and contains_addition) emits no domain axioms.
         assert_eq!(
             axioms.len(),
             0,

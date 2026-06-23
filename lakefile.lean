@@ -8,7 +8,7 @@ package «Cobb_Totem» where
 -- TotemArtifact package's `ProofAutomation` library. Requiring it locally puts
 -- `ProofAutomation.ProveAxiom` on the lake graph so `lean_validation.rs`'s
 -- `lake env lean --stdin` can resolve the generated `import`. Both packages are
--- pinned to the same toolchain (v4.29.0-rc2), as a local `require` demands.
+-- pinned to the same toolchain (v4.31.0), as a local `require` demands.
 require «TotemArtifact» from "../"
 @[default_target]
 lean_lib «Cobb_Totem» where

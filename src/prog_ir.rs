@@ -601,8 +601,6 @@ impl fmt::Display for BinaryOp {
             BinaryOp::Mul => write!(f, "*"),
             BinaryOp::Div => write!(f, "/"),
             BinaryOp::Mod => write!(f, "mod"),
-            // TODO: Maybe we need to split this? need == for Ocaml axioms... I
-            // think ocaml code is =
             BinaryOp::Eq => write!(f, "=="),
             BinaryOp::Neq => write!(f, "<>"),
             BinaryOp::Lt => write!(f, "<"),

@@ -736,7 +736,6 @@ mod tests {
     mod predicates {
         use super::*;
 
-        // TODO: Why not automatically generate more of this?
         pub const PRELUDE: &str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }
 let [@simp] [@grind] is_nil (l : ilist) : bool = match l with | Nil -> true | Cons { head = _; tail = _ } -> false
 let [@simp] [@grind] hd (l : ilist) (x : int) : bool = match l with | Nil -> false | Cons { head = h; tail = _ } -> h = x
