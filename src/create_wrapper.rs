@@ -28,6 +28,7 @@ pub(crate) fn create_and_wrap_predicate(binding: &LetBinding) -> (LetBinding, Le
     let mut impl_binding = binding.clone();
     impl_binding.name = impl_fn_name.clone();
     impl_binding.body = rename_function_calls_in(&impl_binding.body);
+    impl_binding.attributes = vec!["simp".to_string(), "grind".to_string()];
 
     // Add termination proof for recursive functions with Int as first parameter
     if binding.is_recursive
@@ -41,12 +42,13 @@ pub(crate) fn create_and_wrap_predicate(binding: &LetBinding) -> (LetBinding, Le
         ));
     }
 
-    let mut wrapper_attributes = binding.attributes.clone();
-    wrapper_attributes.push("grind unfold".to_string());
-
     let wrapper = LetBinding {
         name: original_name.clone(),
-        attributes: wrapper_attributes,
+        attributes: vec![
+            "simp".to_string(),
+            "grind".to_string(),
+            "grind unfold".to_string(),
+        ],
         is_recursive: false,
         params: {
             let mut params = binding.params.clone();
@@ -145,7 +147,7 @@ mod tests {
 
     #[test]
     fn test_create_and_wrap_predicate_for_len() {
-        let ocaml_src = "let[@simp][@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons(_, tl) -> 1 + len tl";
+        let ocaml_src = "let rec len (l : ilist) : int = match l with | Nil -> 0 | Cons(_, tl) -> 1 + len tl";
         let nodes = crate::ocamlparser::OcamlParser::parse_nodes(ocaml_src)
             .unwrap_or_else(|e| panic!("Failed to parse OCaml: {}", e));
         let binding = test_helpers::find_function(&nodes, "len");

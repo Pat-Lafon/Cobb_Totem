@@ -93,7 +93,8 @@ impl ToLean for Literal {
     }
 }
 
-/// Wrap all functions in a list of AST nodes with impl+wrapper predicates
+/// `grind` on each datatype gives the generated `LawfulBEq` `eq_of_beq` proof the
+/// constructor facts it needs; stamped here so `program.ml` carries no Lean attributes.
 pub fn wrap_all_functions(nodes: Vec<AstNode>) -> Vec<AstNode> {
     nodes
         .into_iter()
@@ -105,7 +106,10 @@ pub fn wrap_all_functions(nodes: Vec<AstNode>) -> Vec<AstNode> {
                     AstNode::LetBinding(wrapper_fn),
                 ]
             }
-            other => vec![other],
+            AstNode::TypeDeclaration(mut type_decl) => {
+                type_decl.attributes = vec!["grind".to_string()];
+                vec![AstNode::TypeDeclaration(type_decl)]
+            }
         })
         .collect()
 }
