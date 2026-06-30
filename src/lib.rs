@@ -221,9 +221,8 @@ pub(crate) mod test_helpers {
                     .iter()
                     .map(|axiom| {
                         let mut all_body_steps = axiom.body_steps.clone();
-                        if let Some(result_expr) = &axiom.result_expr {
-                            all_body_steps.push(Proposition::Expr(result_expr.clone()));
-                        }
+                        all_body_steps.extend(axiom.guard.clone());
+                        all_body_steps.push(Proposition::Expr(axiom.result_expr.clone()));
 
                         let mut steps = axiom.input_constraints.clone();
                         if !all_body_steps.is_empty() {

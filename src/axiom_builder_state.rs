@@ -16,24 +16,25 @@ pub(crate) struct BodyPropositionData {
     /// Constraints from structural patterns (pattern matching) and guard conditions (if-then-else).
     pub(crate) input_constraints: Vec<Proposition>,
     pub(crate) body_steps: Vec<Proposition>,
-    pub(crate) result_expr: Option<Expression>,
+    pub(crate) guard: Vec<Proposition>,
+    pub(crate) result_expr: Expression,
     pub(crate) additional_parameters: Vec<Parameter>,
 }
 
 impl BodyPropositionData {
-    /// Consume self and return the antecedent steps in order: input constraints, body steps, then
-    /// the `result = result_expr` step.
+    /// Consume self and return the antecedent steps in order: input constraints, body steps, guard,
+    /// then the `result = result_expr` step.
     fn into_steps(self) -> (Vec<Proposition>, Vec<Parameter>) {
         let BodyPropositionData {
             mut input_constraints,
             body_steps,
+            guard,
             result_expr,
             additional_parameters,
         } = self;
         input_constraints.extend(body_steps);
-        if let Some(result_expr) = result_expr {
-            input_constraints.push(Proposition::Expr(result_expr));
-        }
+        input_constraints.extend(guard);
+        input_constraints.push(Proposition::Expr(result_expr));
         (input_constraints, additional_parameters)
     }
 }
@@ -152,6 +153,7 @@ impl AxiomBuilderState {
         let BodyPropositionData {
             input_constraints,
             body_steps,
+            guard,
             result_expr,
             additional_parameters,
         } = body_prop;
@@ -161,9 +163,15 @@ impl AxiomBuilderState {
         antecedent.extend(input_constraints);
 
         let mut consequent = body_steps;
-        if let Some(result_expr) = result_expr {
-            consequent.push(Proposition::Expr(result_expr));
-        }
+        let result_eq = Proposition::Expr(result_expr);
+        consequent.push(if guard.is_empty() {
+            result_eq
+        } else {
+            Proposition::Implication(
+                Box::new(Proposition::optional_conjunction(guard)),
+                Box::new(result_eq),
+            )
+        });
 
         let (structural_lifted, body) = Self::branch_implication(
             antecedent,
@@ -510,15 +518,16 @@ mod tests {
         let all_axioms = builder.generate_all();
         let axioms = AxiomBuilderState::exported_axioms(&all_axioms);
 
-        let height_1_expected = "theorem height_1 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res_0 : Int, ∀ res_1 : Int, ∀ res : Int, ((((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) ∧ ((height l res_0) ∧ (height r res_1) ∧ (res_0 > res_1)) ∧ (height l res_0) ∧ ((1 + res_0) = res)) → (height t res)) := by prove_axiom";
+        let height_1_expected = "theorem height_1 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res_0 : Int, ∀ res_1 : Int, ∀ res : Int, ((((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) ∧ (height l res_0) ∧ (height r res_1) ∧ (res_0 > res_1) ∧ ((1 + res_0) = res)) → (height t res)) := by prove_axiom";
 
-        let height_2_expected = "theorem height_2 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res_0 : Int, ∀ res_1 : Int, ∀ res : Int, ((((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) ∧ ((height l res_0) ∧ (height r res_1) ∧ ¬((res_0 > res_1))) ∧ (height r res_1) ∧ ((1 + res_1) = res)) → (height t res)) := by prove_axiom";
+        let height_2_expected = "theorem height_2 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res_0 : Int, ∀ res_1 : Int, ∀ res : Int, ((((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) ∧ (height l res_0) ∧ (height r res_1) ∧ ¬((res_0 > res_1)) ∧ ((1 + res_1) = res)) → (height t res)) := by prove_axiom";
 
-        // Guard-pushed `res_0`/`res_1` occur in the input constraints (the ite guard), so the
-        // `_fwd` direction binds them as outer universals, not consequent existentials.
-        let height_1_fwd_expected = "theorem height_1_fwd : ∀ t : tree, ∀ res : Int, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res_0 : Int, ∀ res_1 : Int, (((height t res) ∧ ((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) ∧ ((height l res_0) ∧ (height r res_1) ∧ (res_0 > res_1))) → ((height l res_0) ∧ ((1 + res_0) = res))) := by prove_axiom";
+        // Productive eliminator: the recursive children `res_0`/`res_1` are produced existentially
+        // and the branch guard gates only the result equality, so z3 instantiates on the parent
+        // `height t res` rather than presupposing the children.
+        let height_1_fwd_expected = "theorem height_1_fwd : ∀ t : tree, ∀ res : Int, ∀ v : Int, ∀ l : tree, ∀ r : tree, (((height t res) ∧ ((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r))) → (∃ res_0 : Int, (∃ res_1 : Int, ((height l res_0) ∧ (height r res_1) ∧ ((res_0 > res_1) → ((1 + res_0) = res)))))) := by prove_axiom";
 
-        let height_2_fwd_expected = "theorem height_2_fwd : ∀ t : tree, ∀ res : Int, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res_0 : Int, ∀ res_1 : Int, (((height t res) ∧ ((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) ∧ ((height l res_0) ∧ (height r res_1) ∧ ¬((res_0 > res_1)))) → ((height r res_1) ∧ ((1 + res_1) = res))) := by prove_axiom";
+        let height_2_fwd_expected = "theorem height_2_fwd : ∀ t : tree, ∀ res : Int, ∀ v : Int, ∀ l : tree, ∀ r : tree, (((height t res) ∧ ((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r))) → (∃ res_0 : Int, (∃ res_1 : Int, ((height l res_0) ∧ (height r res_1) ∧ (¬((res_0 > res_1)) → ((1 + res_1) = res)))))) := by prove_axiom";
 
         assert_axiom_lean_output(
             &axioms,
@@ -601,7 +610,7 @@ mod tests {
     fn test_domain_axiom_for_tree_height() {
         use crate::axiom_generator::AxiomGenerator;
 
-        let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }\nlet [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> 1 + (if height l > height r then height l else height r)";
+        let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }\nlet [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> ite (height l > height r) (1 + height l) (1 + height r)";
         let mut parsed_nodes = test_helpers::parse_program(program_str);
         let height_fn = test_helpers::find_function(&parsed_nodes, "height");
         let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
