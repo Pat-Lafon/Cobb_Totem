@@ -56,7 +56,7 @@ existential/non-existential split and adds twin-fact grind patterns for inductiv
 `lean_backend.rs::build` prepends `import ProofAutomation.ProveAxiom` whenever any axiom carries a
 real (non-`sorry`) proof, and Cobb_Totem's `lakefile.lean` requires the root package
 (`require «TotemArtifact» from "../"`) so the import resolves during `lake env lean --stdin`
-validation. Both packages share the `v4.31.0` toolchain, as a local `require` demands.
+validation. Both packages must share the same Lean toolchain (pinned in `../lean-toolchain`) — a local `require` between packages demands this.
 
 ## Testing
 
