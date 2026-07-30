@@ -1,6 +1,4 @@
-# CLAUDE.md
-
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+# Cobb_Totem — OCaml-to-Lean 4 axiom generator
 
 ## Project Overview
 
@@ -22,6 +20,17 @@ lake update
 lake build ProofAutomation.ProveAxiom    # build the tactic from the required root package
 lake build
 ```
+
+## Axiom Format
+
+The emitted axioms are OCaml `let[@axiom]` declarations:
+```ocaml
+let[@axiom] len_0 (l : ilist) (res : int) =
+  ((len_wrapper l res))#==>((l)#==(Nil))#==>((0)#==(res))
+```
+- Universal params: `(name : type)`, existential: `((name [@exists]) : type)`
+- Operators: `#==>` (implication), `#==` (equality)
+- Wrapper functions normalize function results for axiom comparison
 
 ## Architecture
 
@@ -51,8 +60,8 @@ OCaml Source (.ml)
 **Proof Tactics**: every axiom is discharged by the shared `prove_axiom` tactic
 (`ProofAutomation.ProveAxiom`, in the root `TotemArtifact` package). `Axiom::generate_proof_tactic`
 in `spec_ir.rs` emits a uniform `prove_axiom`; `domain_axiom_builder.rs` does the same for its
-domain axioms. There is no per-axiom tactic synthesis — `prove_axiom` subsumes the former
-existential/non-existential split and adds twin-fact grind patterns for inductive-converse axioms.
+domain axioms. There is no per-axiom tactic synthesis — `prove_axiom` handles all cases,
+including twin-fact grind patterns for inductive-converse axioms.
 `lean_backend.rs::build` prepends `import ProofAutomation.ProveAxiom` whenever any axiom carries a
 real (non-`sorry`) proof, and Cobb_Totem's `lakefile.lean` requires the root package
 (`require «TotemArtifact» from "../"`) so the import resolves during `lake env lean --stdin`
@@ -60,17 +69,14 @@ validation. Both packages must share the same Lean toolchain (pinned in `../lean
 
 ## Testing
 
-Tests are in `/tests/integration_tests.rs` (end-to-end) and unit tests within each module.
+Tests are in `tests/integration_tests.rs` (end-to-end) and unit tests within each module.
 
-Example files in `/examples/`: `list_len.ml`, `list_sorted.ml`, `bst.ml`, `rbtree.ml`, `tree_height.ml`, `tree_complete.ml`
+Example files in `examples/`: `list_len.ml`, `list_sorted.ml`, `bst.ml`, `rbtree.ml`, `tree_height.ml`, `tree_complete.ml`
 
 ## Guidelines
 
 ### Visibility
-- Prefer private > `pub(crate)` > `pub`
-- `pub` only for public API: core domain types (`Axiom`, `Parameter`, `Proposition`, `Expression`, `Type`, `LetBinding`, `TypeDecl`) and top-level traits (`ToLean`)
-- `pub(crate)` for internal cross-module items (builders, utilities, helper types)
-- When the compiler warns about unused `pub(crate)` items, remove them — never use `#[allow(dead_code)]`
+Visibility hierarchy and the `#[allow(dead_code)]` rule live in the `rust-conventions` skill. Local delta: `pub` is reserved for the core domain types (`Axiom`, `Parameter`, `Proposition`, `Expression`, `Type`, `LetBinding`, `TypeDecl`) and top-level traits (`ToLean`).
 
 ### Function Design
 - Avoid thin wrapper functions that just delegate without adding logic, validation, or abstraction
