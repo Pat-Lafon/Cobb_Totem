@@ -276,12 +276,9 @@ impl Axiom {
     }
 
     pub(crate) fn generate_proof_tactic(&self) -> String {
-        // All axioms are discharged by the shared `prove_axiom` tactic
-        // (`lean/ProofAutomation/ProveAxiom.lean`), which subsumes the former
-        // per-axiom `grind` / `try aesop` + case-analysis strategies and adds
-        // twin-fact grind patterns for inductive-converse (Class B) axioms.
-        // Existential-witness (Class D) axioms fail loudly here by design until
-        // `prove_axiom` gains witness support.
+        // Every axiom gets the same tactic — nothing about the axiom selects it. A
+        // shape `prove_axiom` cannot close therefore fails loudly at Lean validation
+        // instead of degrading to `sorry`.
         "prove_axiom".to_string()
     }
 }
