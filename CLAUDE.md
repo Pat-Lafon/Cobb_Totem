@@ -26,9 +26,7 @@ is gitignored, so it fails in a fresh checkout.
 - `#==>` is implication; everything else is ordinary OCaml-shaped syntax. `Proposition::Equality`,
   which renders `#==`, exists in the IR but is constructed only in `spec_ir.rs` tests — the generator
   never emits it.
-- Naming: `{f}_geq_0` (measure non-negativity, `DOMAIN_AXIOM_SUFFIX`), `{f}_functional` (determinism),
-  `{f}_total` (existence), `{f}_{idx}` (branch introduction), `{f}_{idx}_fwd` (branch
-  forward-elimination).
+- Naming: `build_axioms_for` in `src/axiom_builder_state.rs`.
 
 **Predicates leave the tool as axioms, never as definitions.** Nothing in the exported set gives Z3 a
 body to unfold — no SMT-LIB `define-fun`, no Lean `def`. Axioms give Z3 controllable quantifier
@@ -43,10 +41,7 @@ That governs the *exported* axioms. The Lean file built for validation does defi
 which is what lets Lean discharge the axioms at all. That `def` never reaches Cobb.
 
 **Every per-branch introduction `{pred}_{idx}` needs a paired forward-elimination `{pred}_{idx}_fwd`**,
-emitted by `build_branch_elim_axiom_for` in `src/axiom_builder_state.rs`: antecedent
-`pred(inputs, res) ∧ input_constraints_conj`, consequent `∃ body_params. (body_steps_conj ∧
-result_eq)`, with an `additional_parameter` named by `input_constraints` universal and one appearing
-only in `body_steps`/`result_expr` existential under the consequent.
+emitted by `build_branch_elim_axiom_for` in `src/axiom_builder_state.rs`.
 
 Z3 cannot synthesize witnesses for the lifted body params — recursive-call results like `res_0` in
 `len xs res_0` — when triggering `_functional`/`_total` against an opaque hypothesis `pred l res`,
@@ -88,6 +83,8 @@ output string-for-string — those are what a shape change breaks first.
 
 `tests/` is a separate crate, so the pipeline stages it and `main.rs` drive are `pub`. Everything
 reachable only from inside the crate is `pub(crate)`, and a new item starts there.
+
+## Placeholders
 
 Never stand in a dummy node or placeholder value (`Expression::Variable("")`) — reach for
 `unimplemented!()` with a message.
