@@ -1,3 +1,7 @@
+//! The pipeline runs `ocamlparser` (tree-sitter) → `prog_ir` → `axiom_generator` (`prepare_function`,
+//! one `PreparedBinding` per function) → `axiom_builder_state` (`generate_all`, where the axiom shapes
+//! are decided) → `spec_ir` → `lean_backend` → `lean_validation` (`lake env lean --stdin`).
+
 pub mod axiom_builder_state;
 pub mod axiom_generator;
 pub(crate) mod axiom_validation;

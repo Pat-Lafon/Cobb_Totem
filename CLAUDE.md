@@ -14,19 +14,18 @@ generated Lean file. `cargo test` takes minutes rather than seconds — every la
 
 `unknown module prefix 'ProofAutomation'` means the Lean side isn't built: `lake update`, then
 `lake build ProofAutomation.ProveAxiom`. Bare `lake build` targets the default root `Main.lean`, which
-is gitignored, so it fails in a fresh checkout.
+is gitignored, so it fails in a fresh checkout. Under Claude Code, pasiv's lakefile builds into
+`.lake/build-<CLAUDE_CODE_SESSION_ID>`, so every new session starts unbuilt and needs that build once.
 
 ## Axiom format
 
-- `len l res` is the relation predicate: the OCaml function name applied to its inputs plus a result
-  argument. `is_nil` / `is_cons` and field accessors like `head` / `tail` are helper predicates
-  generated from the datatype (`TypeDecl::generate_helper_predicates`).
+- Relation predicates and naming: `build_axioms_for` in `src/axiom_builder_state.rs`; helper
+  predicates: `TypeDecl::generate_helper_predicates`.
 - Every parameter in the header is universal, written `(name : type)`. Existentials appear only inside
   the body, as `fun ((name [@exists]) : type) -> …` binders.
 - `#==>` is implication; everything else is ordinary OCaml-shaped syntax. `Proposition::Equality`,
   which renders `#==`, exists in the IR but is constructed only in `spec_ir.rs` tests — the generator
   never emits it.
-- Naming: `build_axioms_for` in `src/axiom_builder_state.rs`.
 
 **Predicates leave the tool as axioms, never as definitions.** Nothing in the exported set gives Z3 a
 body to unfold — no SMT-LIB `define-fun`, no Lean `def`. Axioms give Z3 controllable quantifier
@@ -58,19 +57,16 @@ hand-add to `_proposed.ml` at implementation time, not by keeping or adding an a
 
 ## Architecture
 
-The pipeline runs `ocamlparser.rs` (tree-sitter) → `prog_ir.rs` → `axiom_generator.rs`
-(`prepare_function`, one `PreparedBinding` per function) → `axiom_builder_state.rs` (`generate_all`,
-where the axiom shapes are decided) → `spec_ir.rs` → `lean_backend.rs` → `lean_validation.rs`
-(`lake env lean --stdin`). `ls src/` for the current module roster.
+Pipeline stages: `src/lib.rs` module doc.
 
 `Axiom::validate` runs over every axiom inside `generate_all` and panics on a builder bug — free
 variable, duplicate binder, universal-after-existential.
 
-Every axiom is discharged by the shared `prove_axiom` tactic from the root `TotemArtifact` package;
+Every axiom is discharged by the shared `prove_axiom` tactic from pasiv's `ProofAutomation` library;
 `Axiom::generate_proof_tactic` and `domain_axiom_builder.rs` both emit it uniformly, so there is no
 per-axiom tactic synthesis and a shape `prove_axiom` cannot close fails loudly at validation rather
-than falling back. `lakefile.lean` requires the root package by relative path, which demands both
-packages share the Lean toolchain pinned in `../lean-toolchain`.
+than falling back. `lakefile.lean` requires `Pat-Lafon/pasiv` by git at the rev `lake-manifest.json`
+pins; both packages must pin the same Lean toolchain in `lean-toolchain`.
 
 ## Testing
 
@@ -83,8 +79,3 @@ output string-for-string — those are what a shape change breaks first.
 
 `tests/` is a separate crate, so the pipeline stages it and `main.rs` drive are `pub`. Everything
 reachable only from inside the crate is `pub(crate)`, and a new item starts there.
-
-## Placeholders
-
-Never stand in a dummy node or placeholder value (`Expression::Variable("")`) — reach for
-`unimplemented!()` with a message.

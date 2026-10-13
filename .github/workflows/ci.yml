@@ -14,21 +14,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # Cobb_Totem's lakefile does `require «TotemArtifact» from "../"`, so the
-      # Lean build (driven by cargo test via `lake env lean --stdin`) needs the
-      # superproject's root package present one directory up. Check the
-      # superproject out into `totem/` and the ref under test into
-      # `totem/Cobb_Totem/`, then run every build step from there.
-      - name: Checkout TotemArtifact superproject
-        uses: actions/checkout@v4
-        with:
-          repository: Pat-Lafon/Totem_Artifact
-          path: totem
-
-      - name: Checkout Cobb_Totem under test
-        uses: actions/checkout@v4
-        with:
-          path: totem/Cobb_Totem
+      - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -39,8 +25,8 @@ jobs:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
-            totem/Cobb_Totem/target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('totem/Cobb_Totem/Cargo.lock') }}
+            target
+          key: ${{ runner.os }}-cargo-test-${{ hashFiles('Cargo.lock') }}
           restore-keys: |
             ${{ runner.os }}-cargo-test-
 
@@ -54,22 +40,18 @@ jobs:
         with:
           path: |
             ~/.elan
-            totem/.lake
-            totem/Cobb_Totem/.lake
-          key: ${{ runner.os }}-lake-${{ hashFiles('totem/Cobb_Totem/lakefile.lean', 'totem/Cobb_Totem/lake-manifest.json') }}
+            .lake
+          key: ${{ runner.os }}-lake-${{ hashFiles('lakefile.lean', 'lake-manifest.json') }}
           restore-keys: |
             ${{ runner.os }}-lake-
 
       - name: Setup Lean dependencies
-        working-directory: totem/Cobb_Totem
         run: lake build ProofAutomation.ProveAxiom
 
       - name: Build
-        working-directory: totem/Cobb_Totem
         run: cargo build --verbose
 
       - name: Run tests
-        working-directory: totem/Cobb_Totem
         run: cargo test --verbose
 
   clippy:
