@@ -126,28 +126,15 @@ impl OcamlParser {
         fields
     }
 
-    /// Helper: parse attributes from the current node and advance cursor.
-    /// Returns a vector of cleaned attribute names (without [@...] brackets).
-    /// Assumes cursor is at an "attribute" node; after execution, cursor is at the next sibling.
-    fn parse_attributes(&self, cursor: &mut tree_sitter::TreeCursor) -> Vec<String> {
-        let mut attributes = Vec::new();
+    /// Helper: skip `[@...]` attributes, which carry no meaning for axiom generation.
+    /// After execution, cursor is at the first sibling that is not an attribute.
+    fn skip_attributes(cursor: &mut tree_sitter::TreeCursor) {
         while cursor.node().kind() == "attribute" {
-            let attr_text = cursor
-                .node()
-                .utf8_text(self.source.as_bytes())
-                .expect("Failed to extract attribute")
-                .to_string();
-            // Remove surrounding [@...] brackets
-            let cleaned = attr_text
-                .trim_matches(|c| c == '@' || c == '[' || c == ']')
-                .to_string();
-            attributes.push(cleaned);
             assert!(
                 cursor.goto_next_sibling(),
                 "Failed to advance cursor past attribute"
             );
         }
-        attributes
     }
 
     /// Parse a parameter node to extract name and required type annotation.
@@ -276,15 +263,14 @@ impl OcamlParser {
             "Type definition missing children after 'type'"
         );
 
-        // Step 1: Collect optional attributes (may be multiple)
-        let attributes = self.parse_attributes(cursor);
+        // Step 1: Skip optional attributes (may be multiple)
+        Self::skip_attributes(cursor);
 
         // Step 2: Parse type_binding
         let type_binding = cursor.node();
         assert_eq!(type_binding.kind(), "type_binding");
 
-        let mut result = self.parse_type_binding(cursor);
-        result.attributes = attributes;
+        let result = self.parse_type_binding(cursor);
 
         // After parse_type_binding, cursor is at type_binding
         assert!(
@@ -359,11 +345,7 @@ impl OcamlParser {
 
         // Restore cursor to type_binding node
         Self::restore_cursor(cursor, "type_binding");
-        TypeDecl {
-            name,
-            variants,
-            attributes: Vec::new(),
-        }
+        TypeDecl { name, variants }
     }
 
     // Example: "Nil" or "Cons of { head : int; tail : int list }"
@@ -440,8 +422,8 @@ impl OcamlParser {
             "Value definition missing children after 'let'"
         );
 
-        // Step 1: Collect optional attributes (may be multiple)
-        let attributes = self.parse_attributes(cursor);
+        // Step 1: Skip optional attributes (may be multiple)
+        Self::skip_attributes(cursor);
 
         // Step 2: Check for 'rec' keyword (optional)
         let is_recursive = if cursor.node().kind() == "rec" {
@@ -514,12 +496,10 @@ impl OcamlParser {
 
         LetBinding {
             name: VarName::new(name),
-            attributes,
             is_recursive,
             params,
             return_type,
             body,
-            termination_proof: None,
         }
     }
 
@@ -615,7 +595,6 @@ impl OcamlParser {
                 Expression::Constructor(name, vec![])
             }
             "infix_expression" => self.parse_infix_operation(node),
-            "prefix_expression" => self.parse_prefix_expression(node),
             "application_expression" => self.parse_application_expression(node),
             "record_expression" => self.parse_record_expression(node),
             "number" => Expression::Literal(self.parse_number_from_node(node)),
@@ -701,29 +680,6 @@ impl OcamlParser {
         elements
     }
 
-    fn parse_prefix_expression(&self, node: Node) -> Expression {
-        let mut cursor = node.walk();
-        assert!(
-            cursor.goto_first_child(),
-            "Prefix expression has no children"
-        );
-
-        let op_node = cursor.node();
-        let op_text = op_node
-            .utf8_text(self.source.as_bytes())
-            .expect("Failed to extract prefix operator");
-
-        let op = op_text.parse().unwrap();
-
-        assert!(
-            cursor.goto_next_sibling(),
-            "Prefix expression missing operand"
-        );
-        let operand = self.parse_expression(cursor.node());
-
-        Expression::UnaryOp(op, Box::new(operand))
-    }
-
     fn parse_application_expression(&self, node: Node) -> Expression {
         let mut cursor = node.walk();
         assert!(
@@ -800,7 +756,6 @@ impl OcamlParser {
                 Expression::Application(Box::new(func), args)
             }
             Expression::Literal(_)
-            | Expression::UnaryOp(_, _)
             | Expression::BinaryOp(_, _, _)
             | Expression::Tuple(_)
             | Expression::IfThenElse { .. }
@@ -1403,7 +1358,6 @@ mod tests {
     ) -> AstNode {
         AstNode::LetBinding(LetBinding {
             name: VarName::new(name),
-            attributes: vec![],
             is_recursive: false,
             params: params
                 .into_iter()
@@ -1411,20 +1365,17 @@ mod tests {
                 .collect(),
             return_type,
             body,
-            termination_proof: None,
         })
     }
 
     fn let_binding_rec(
         name: &str,
-        attrs: Vec<&str>,
         params: Vec<(&str, Type)>,
         return_type: Option<Type>,
         body: Expression,
     ) -> AstNode {
         AstNode::LetBinding(LetBinding {
             name: VarName::new(name),
-            attributes: attrs.into_iter().map(|s| s.to_string()).collect(),
             is_recursive: true,
             params: params
                 .into_iter()
@@ -1432,7 +1383,6 @@ mod tests {
                 .collect(),
             return_type,
             body,
-            termination_proof: None,
         })
     }
 
@@ -1456,7 +1406,6 @@ mod tests {
                     ],
                 },
             ],
-            attributes: vec![],
         })];
 
         assert_eq!(parser.parse(&tree).unwrap(), expected);
@@ -1482,7 +1431,6 @@ mod tests {
                     ],
                 },
             ],
-            attributes: vec!["simp".to_string()],
         })];
 
         assert_eq!(parser.parse(&tree).unwrap(), expected);
@@ -1508,7 +1456,6 @@ mod tests {
                     ],
                 },
             ],
-            attributes: vec!["simp".to_string(), "reflect".to_string()],
         })];
 
         assert_eq!(parser.parse(&tree).unwrap(), expected);
@@ -1529,7 +1476,6 @@ mod tests {
                     ("c".to_string(), Type::Bool),
                 ],
             }],
-            attributes: vec![],
         })];
 
         assert_eq!(parser.parse(&tree).unwrap(), expected);
@@ -1550,7 +1496,6 @@ mod tests {
                     ("right".to_string(), Type::Named("tree".to_string())),
                 ],
             }],
-            attributes: vec![],
         })];
 
         assert_eq!(parser.parse(&tree).unwrap(), expected);
@@ -1584,7 +1529,6 @@ mod tests {
                     ],
                 },
             ],
-            attributes: vec![],
         })];
 
         assert_eq!(parser.parse(&tree).unwrap(), expected);
@@ -1652,7 +1596,6 @@ mod tests {
             "let rec factorial (n : int) : int = match n with | 0 -> 1 | x -> x * factorial (x - 1)",
             vec![let_binding_rec(
                 "factorial",
-                vec![],
                 vec![("n", Type::Int)],
                 Some(Type::Int),
                 Expression::Match(
@@ -1689,7 +1632,6 @@ mod tests {
             "let[@reflect] rec len (l : ilist) (n : int) : bool = n = 0",
             vec![let_binding_rec(
                 "len",
-                vec!["reflect"],
                 vec![("l", Type::Named("ilist".to_string())), ("n", Type::Int)],
                 Some(Type::Bool),
                 Expression::BinaryOp(
@@ -1707,7 +1649,6 @@ mod tests {
             "let test (x : int) : bool = match x with | 0 -> true | _ -> false",
             vec![AstNode::LetBinding(LetBinding {
                 name: VarName::new("test"),
-                attributes: vec![],
                 is_recursive: false,
                 params: vec![(VarName::new("x"), Type::Int)],
                 return_type: Some(Type::Bool),
@@ -1721,7 +1662,6 @@ mod tests {
                         (Pattern::Wildcard, Expression::Literal(Literal::Bool(false))),
                     ],
                 ),
-                termination_proof: None,
             })],
         );
     }
@@ -1751,11 +1691,9 @@ mod tests {
                         ],
                     },
                 ],
-                attributes: vec![],
             }),
             AstNode::LetBinding(LetBinding {
                 name: VarName::new("len"),
-                attributes: vec!["reflect".to_string()],
                 is_recursive: true,
                 params: vec![
                     (VarName::new("l"), Type::Named("ilist".to_string())),
@@ -1795,7 +1733,6 @@ mod tests {
                         ),
                     ],
                 ),
-                termination_proof: None,
             }),
         ];
 
@@ -1948,7 +1885,6 @@ mod tests {
             "let test (x : ilist) : bool = match x with | Nil -> true | Cons (_, _) -> false";
         let expected = vec![AstNode::LetBinding(LetBinding {
             name: VarName::new("test"),
-            attributes: vec![],
             is_recursive: false,
             params: vec![(VarName::new("x"), Type::Named("ilist".to_string()))],
             return_type: Some(Type::Bool),
@@ -1968,7 +1904,6 @@ mod tests {
                     ),
                 ],
             ),
-            termination_proof: None,
         })];
         assert_parse(source, expected);
     }
@@ -1979,7 +1914,6 @@ mod tests {
 
         let expected = vec![AstNode::LetBinding(LetBinding {
             name: VarName::new("test"),
-            attributes: vec![],
             is_recursive: false,
             params: vec![(VarName::new("x"), Type::Int)],
             return_type: Some(Type::Bool),
@@ -1994,7 +1928,6 @@ mod tests {
                     ),
                 )],
             ),
-            termination_proof: None,
         })];
 
         assert_parse(source, expected);
@@ -2006,7 +1939,6 @@ mod tests {
 
         let expected = vec![AstNode::LetBinding(LetBinding {
             name: VarName::new("test"),
-            attributes: vec![],
             is_recursive: false,
             params: vec![(VarName::new("x"), Type::Int)],
             return_type: Some(Type::Bool),
@@ -2026,7 +1958,6 @@ mod tests {
                     (Pattern::Wildcard, Expression::Literal(Literal::Bool(false))),
                 ],
             ),
-            termination_proof: None,
         })];
 
         assert_parse(source, expected);
@@ -2038,7 +1969,6 @@ mod tests {
 
         let expected = vec![AstNode::LetBinding(LetBinding {
             name: VarName::new("test"),
-            attributes: vec![],
             is_recursive: false,
             params: vec![(VarName::new("x"), Type::Int)],
             return_type: Some(Type::Bool),
@@ -2052,7 +1982,6 @@ mod tests {
                     (Pattern::Wildcard, Expression::Literal(Literal::Bool(false))),
                 ],
             ),
-            termination_proof: None,
         })];
 
         assert_parse(source, expected);
@@ -2064,12 +1993,10 @@ mod tests {
             "let[@simp] test (x : int) : bool = true",
             vec![AstNode::LetBinding(LetBinding {
                 name: VarName::new("test"),
-                attributes: vec!["simp".to_string()],
                 is_recursive: false,
                 params: vec![(VarName::new("x"), Type::Int)],
                 return_type: Some(Type::Bool),
                 body: Expression::Literal(Literal::Bool(true)),
-                termination_proof: None,
             })],
         );
     }
@@ -2080,12 +2007,10 @@ mod tests {
             "let[@simp][@grind] test (x : int) : bool = true",
             vec![AstNode::LetBinding(LetBinding {
                 name: VarName::new("test"),
-                attributes: vec!["simp".to_string(), "grind".to_string()],
                 is_recursive: false,
                 params: vec![(VarName::new("x"), Type::Int)],
                 return_type: Some(Type::Bool),
                 body: Expression::Literal(Literal::Bool(true)),
-                termination_proof: None,
             })],
         );
     }
@@ -2096,7 +2021,6 @@ mod tests {
             "let[@reflect] rec fib (n : int) : int = match n with | 0 -> 0 | 1 -> 1 | x -> fib (x - 1)",
             vec![let_binding_rec(
                 "fib",
-                vec!["reflect"],
                 vec![("n", Type::Int)],
                 Some(Type::Int),
                 Expression::Match(
@@ -2148,11 +2072,9 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
                         ],
                     },
                 ],
-                attributes: vec!["simp".to_string()],
             }),
             AstNode::LetBinding(LetBinding {
                 name: VarName::new("len"),
-                attributes: vec!["grind".to_string()],
                 is_recursive: true,
                 params: vec![(VarName::new("l"), Type::Named("ilist".to_string()))],
                 return_type: Some(Type::Int),
@@ -2182,7 +2104,6 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
                         ),
                     ],
                 ),
-                termination_proof: None,
             }),
         ];
 
@@ -2196,7 +2117,6 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
             "let[@simp] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> 1 + ite (height l > height r) (height l) (height r)",
             vec![let_binding_rec(
                 "height",
-                vec!["simp"],
                 vec![("t", Type::Named("tree".to_string()))],
                 Some(Type::Int),
                 Expression::Match(
@@ -2273,7 +2193,6 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
             "let test (x : int) : int = if x = 0 then 0 else x",
             vec![AstNode::LetBinding(LetBinding {
                 name: VarName::new("test"),
-                attributes: vec![],
                 is_recursive: false,
                 params: vec![(VarName::new("x"), Type::Int)],
                 return_type: Some(Type::Int),
@@ -2286,7 +2205,6 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
                     then_branch: Box::new(Expression::Literal(Literal::Int(0))),
                     else_branch: Box::new(Expression::Variable("x".into())),
                 },
-                termination_proof: None,
             })],
         );
     }
@@ -2349,7 +2267,6 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
 
         let expected = vec![let_binding_rec(
             "num_black",
-            vec!["simp", "grind"],
             vec![("t", Type::Named("rbtree".to_string())), ("h", Type::Int)],
             Some(Type::Bool),
             Expression::Match(
@@ -2436,7 +2353,6 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
 
         let expected = vec![let_binding_rec(
             "rb_root_color",
-            vec!["simp", "grind"],
             vec![("t", Type::Named("rbtree".to_string())), ("c", Type::Bool)],
             Some(Type::Bool),
             Expression::Match(
@@ -2481,7 +2397,6 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
 
         let expected = vec![let_binding_rec(
             "rbdepth",
-            vec!["simp", "grind"],
             vec![("t", Type::Named("rbtree".to_string()))],
             Some(Type::Int),
             Expression::Match(
@@ -2569,7 +2484,6 @@ let[@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = 
 
         let expected = vec![let_binding_rec(
             "len",
-            vec![],
             vec![("l", Type::Named("ilist".to_string()))],
             Some(Type::Int),
             Expression::Variable("x".into()),

@@ -1,21 +1,17 @@
 //! The pipeline runs `ocamlparser` (tree-sitter) → `prog_ir` → `axiom_generator` (`prepare_function`,
 //! one `PreparedBinding` per function) → `axiom_builder_state` (`generate_all`, where the axiom shapes
-//! are decided) → `spec_ir` → `lean_backend` → `lean_validation` (`lake env lean --stdin`).
+//! are decided) → `spec_ir`, whose `Display` impls render the `let[@axiom]` output.
 
 pub mod axiom_builder_state;
 pub mod axiom_generator;
 pub(crate) mod axiom_validation;
-pub(crate) mod create_wrapper;
 pub(crate) mod domain_axiom_builder;
 pub(crate) mod integration_tests;
-pub mod lean_backend;
-pub(crate) mod lean_validation;
 pub mod ocamlparser;
 pub mod prog_ir;
 pub(crate) mod proposition_transforms;
 pub mod spec_ir;
 
-use create_wrapper::create_and_wrap_predicate;
 use ocamlparser::OcamlParser;
 use prog_ir::AstNode;
 use std::fmt;
@@ -74,11 +70,6 @@ impl AsRef<str> for VarName {
     }
 }
 
-/// Trait for converting AST nodes to Lean syntax
-pub trait ToLean {
-    fn to_lean(&self) -> String;
-}
-
 impl fmt::Display for Literal {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -88,41 +79,10 @@ impl fmt::Display for Literal {
     }
 }
 
-impl ToLean for Literal {
-    fn to_lean(&self) -> String {
-        match self {
-            Literal::Int(n) => n.to_string(),
-            Literal::Bool(b) => b.to_string(),
-        }
-    }
-}
-
-/// `grind` on each datatype gives the generated `LawfulBEq` `eq_of_beq` proof the
-/// constructor facts it needs; stamped here so `program.ml` carries no Lean attributes.
-pub fn wrap_all_functions(nodes: Vec<AstNode>) -> Vec<AstNode> {
-    nodes
-        .into_iter()
-        .flat_map(|node| match node {
-            AstNode::LetBinding(binding) => {
-                let (impl_fn, wrapper_fn) = create_and_wrap_predicate(&binding);
-                vec![
-                    AstNode::LetBinding(impl_fn),
-                    AstNode::LetBinding(wrapper_fn),
-                ]
-            }
-            AstNode::TypeDeclaration(mut type_decl) => {
-                type_decl.attributes = vec!["grind".to_string()];
-                vec![AstNode::TypeDeclaration(type_decl)]
-            }
-        })
-        .collect()
-}
-
-/// Generate and validate axioms for a complete OCaml program
-/// Returns wrapped nodes and generated axioms
-pub fn generate_and_validate_axioms(
+/// Generate the axioms for a complete OCaml program
+pub fn generate_axioms(
     program_str: &str,
-) -> Result<(Vec<AstNode>, Vec<spec_ir::Axiom>), Box<dyn std::error::Error>> {
+) -> Result<Vec<spec_ir::Axiom>, Box<dyn std::error::Error>> {
     let parsed_nodes = OcamlParser::parse_nodes(program_str)?;
 
     let type_decls = parsed_nodes
@@ -146,47 +106,26 @@ pub fn generate_and_validate_axioms(
         })
         .collect();
 
-    let mut generator = axiom_generator::AxiomGenerator::new(vec![type_decl.clone()]);
+    let mut generator = axiom_generator::AxiomGenerator::new(vec![type_decl]);
     for func in &functions {
         generator.prepare_function(func)?;
     }
 
-    let parsed_nodes = wrap_all_functions(parsed_nodes);
-    let builder = generator.build_all();
-
-    let all_axioms = builder.generate_all();
-    builder.validate_with_lean(all_axioms.clone(), parsed_nodes.clone(), &[type_decl])?;
-    let axioms = axiom_builder_state::AxiomBuilderState::exported_axioms(&all_axioms);
-
-    Ok((parsed_nodes, axioms))
+    Ok(generator.build_all().generate_all())
 }
 
 /// Test utilities for parsing and generating axioms (crate internal for testing)
 #[cfg(test)]
 pub(crate) mod test_helpers {
-    use crate::VarName;
     use crate::axiom_generator::AxiomGenerator;
     use crate::ocamlparser::OcamlParser;
-    use crate::prog_ir::{AstNode, LetBinding, TypeDecl};
+    use crate::prog_ir::{AstNode, TypeDecl};
     use crate::spec_ir::{Axiom, Proposition};
 
     /// Parse program string and extract type and function definitions
     pub fn parse_program(program_str: &str) -> Vec<AstNode> {
         let nodes = OcamlParser::parse_nodes(program_str).expect("Failed to parse program");
         nodes
-    }
-
-    /// Find a function binding by name in a list of AST nodes
-    pub fn find_function(nodes: &[AstNode], name: &str) -> LetBinding {
-        nodes
-            .iter()
-            .find_map(|node| match node {
-                AstNode::LetBinding(binding) if binding.name == VarName::new(name) => {
-                    Some(binding.clone())
-                }
-                _ => None,
-            })
-            .unwrap_or_else(|| panic!("Expected to find {} function binding", name))
     }
 
     /// Extract type declarations from parsed nodes
@@ -240,15 +179,10 @@ pub(crate) mod test_helpers {
             .collect()
     }
 
-    /// Generate complete axioms with impl and wrapper from a program string
-    /// Note: Returns ALL axioms (exported + internal) for validation purposes
-    pub(crate) fn generate_axioms_with_wrapper(
-        program_str: &str,
-    ) -> (Vec<AstNode>, Vec<crate::spec_ir::Axiom>) {
-        let mut parsed_nodes = parse_program(program_str);
-        let type_constructors = extract_type_decls(&parsed_nodes);
-
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
+    /// Generate every axiom for every function in a program string
+    pub(crate) fn generate_program_axioms(program_str: &str) -> Vec<Axiom> {
+        let parsed_nodes = parse_program(program_str);
+        let mut generator = AxiomGenerator::new(extract_type_decls(&parsed_nodes));
 
         // Prepare all functions in the program so that calls between them are resolved
         for node in &parsed_nodes {
@@ -259,39 +193,6 @@ pub(crate) mod test_helpers {
             }
         }
 
-        // Wrap the function (and any others in parsed_nodes) with impl+wrapper
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-
-        // Build axioms with proof tactic
-        // Return ALL axioms (exported + internal) so validation has complete context
-        let builder = generator.build_all();
-        let axioms = builder.generate_all();
-
-        (parsed_nodes, axioms)
-    }
-
-    /// Validate generated axioms through Lean backend
-    pub(crate) fn validate_axioms(nodes: Vec<AstNode>, axioms: Vec<Axiom>) {
-        use crate::lean_backend::LeanContextBuilder;
-        use crate::lean_validation::validate_lean_code;
-
-        let mut builder = LeanContextBuilder::new();
-        for type_decl in extract_type_decls(&nodes) {
-            let theorems = type_decl.generate_complete_lawful_beq();
-            builder = builder
-                .with_type_theorems(&type_decl.name, theorems)
-                .with_helper_predicates(&type_decl.name);
-        }
-
-        let lean_code = builder
-            .with_nodes(nodes)
-            .with_axioms(axioms)
-            .with_attributes(vec!["[simp] if_neg"])
-            .build();
-
-        validate_lean_code(&lean_code).unwrap_or_else(|e| {
-            eprintln!("Generated Lean code:\n{}", lean_code);
-            panic!("Generated axioms failed Lean validation:\n{}", e)
-        });
+        generator.build_all().generate_all()
     }
 }

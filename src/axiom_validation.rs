@@ -109,9 +109,6 @@ mod tests {
             name: "test".to_string(),
             params,
             body,
-            proof: None,
-            attributes: vec![],
-            is_internal: false,
         };
 
         axiom
@@ -141,9 +138,6 @@ mod tests {
             name: "test".to_string(),
             params,
             body,
-            proof: None,
-            attributes: vec![],
-            is_internal: false,
         };
 
         axiom
@@ -160,9 +154,6 @@ mod tests {
                 Parameter::universal("x", Type::Int), // Duplicate!
             ],
             body: Proposition::Predicate("p".to_string(), vec![]),
-            proof: None,
-            attributes: vec![],
-            is_internal: false,
         };
         axiom
             .validate_no_duplicate_variables()
@@ -184,9 +175,6 @@ mod tests {
                     )),
                 )),
             ),
-            proof: None,
-            attributes: vec![],
-            is_internal: false,
         };
         axiom
             .validate_no_duplicate_variables()
@@ -202,9 +190,6 @@ mod tests {
                 Parameter::existential("x", Type::Int), // Conflicts with parameter!
                 Box::new(Proposition::Predicate("p".to_string(), vec![])),
             ),
-            proof: None,
-            attributes: vec![],
-            is_internal: false,
         };
         axiom
             .validate_no_duplicate_variables()
@@ -226,9 +211,6 @@ mod tests {
                 )),
                 Box::new(Proposition::Predicate("q".to_string(), vec![])),
             ),
-            proof: None,
-            attributes: vec![],
-            is_internal: false,
         };
         axiom
             .validate_no_duplicate_variables()

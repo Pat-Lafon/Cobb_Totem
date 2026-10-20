@@ -238,18 +238,16 @@ impl AxiomBuilderState {
     /// One `_functional`, one `_total`, and two axioms per branch (an intro `{pred}_{idx}` and a
     /// forward-elimination `{pred}_{idx}_fwd`) for the given prepared binding.
     fn build_axioms_for(prepared: &PreparedBinding) -> Vec<Axiom> {
-        let functional = Self::build_functional_axiom_for(prepared).with_suggested_proof();
-        let total = Self::build_total_axiom_for(prepared).with_suggested_proof();
+        let functional = Self::build_functional_axiom_for(prepared);
+        let total = Self::build_total_axiom_for(prepared);
         let branches =
             prepared
                 .body_propositions
                 .iter()
                 .enumerate()
                 .flat_map(|(idx, body_prop)| {
-                    let intro = Self::build_branch_axiom_for(prepared, idx, body_prop.clone())
-                        .with_suggested_proof();
-                    let fwd = Self::build_branch_elim_axiom_for(prepared, idx, body_prop.clone())
-                        .with_suggested_proof();
+                    let intro = Self::build_branch_axiom_for(prepared, idx, body_prop.clone());
+                    let fwd = Self::build_branch_elim_axiom_for(prepared, idx, body_prop.clone());
                     [intro, fwd]
                 });
 
@@ -274,7 +272,8 @@ impl AxiomBuilderState {
     }
 
     /// Build every axiom for every prepared binding, in emission order, and validate the result.
-    /// Validation failures here indicate a builder bug (free variables, quantifier ordering, etc.)
+    /// Validation failures here indicate a builder bug (free variables, duplicate binders,
+    /// universal-after-existential quantifier order)
     /// and panic with the offending axiom's diagnostic.
     pub(crate) fn generate_all(&self) -> Vec<Axiom> {
         let mut axioms = self.domain_axioms();
@@ -288,74 +287,24 @@ impl AxiomBuilderState {
 
         axioms
     }
-
-    /// Subset of axioms that should appear in OCaml output (internal axioms excluded).
-    pub(crate) fn exported_axioms(axioms: &[Axiom]) -> Vec<Axiom> {
-        axioms
-            .iter()
-            .filter(|a| !a.is_internal())
-            .cloned()
-            .collect()
-    }
-
-    /// Run the Lean validator over a pre-built axiom set. On failure, returns the failing message
-    /// along with the bindings under validation and the generated Lean source.
-    pub(crate) fn validate_with_lean(
-        &self,
-        axioms: Vec<Axiom>,
-        nodes: Vec<crate::prog_ir::AstNode>,
-        type_decls: &[crate::prog_ir::TypeDecl],
-    ) -> Result<(), String> {
-        use crate::lean_backend::LeanContextBuilder;
-        use crate::lean_validation::validate_lean_code;
-
-        let mut context_builder = LeanContextBuilder::new();
-        for type_decl in type_decls {
-            let theorems = type_decl.generate_complete_lawful_beq();
-            context_builder = context_builder
-                .with_type_theorems(&type_decl.name, theorems)
-                .with_helper_predicates(&type_decl.name);
-        }
-
-        let lean_code = context_builder
-            .with_nodes(nodes)
-            .with_axioms(axioms)
-            .build();
-
-        validate_lean_code(&lean_code).map_err(|e| {
-            let bindings = self
-                .prepared
-                .iter()
-                .map(|p| p.binding.name.0.as_str())
-                .collect::<Vec<_>>()
-                .join(", ");
-            format!(
-                "Lean validation failed for bindings [{bindings}]: {e}\n--- generated Lean code ---\n{lean_code}"
-            )
-        })
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::ToLean;
     use crate::spec_ir::Axiom;
     use crate::test_helpers;
 
-    use super::AxiomBuilderState;
-
-    /// Assert that axioms with given names match expected Lean output
-    fn assert_axiom_lean_output(axioms: &[Axiom], expectations: &[(&str, &str)]) {
-        for (expected_name, expected_lean) in expectations {
+    /// Assert that axioms with given names render as the expected `let[@axiom]` declarations
+    fn assert_axiom_output(axioms: &[Axiom], expectations: &[(&str, &str)]) {
+        for (expected_name, expected) in expectations {
             let axiom = axioms
                 .iter()
                 .find(|a| &a.name == expected_name)
                 .unwrap_or_else(|| panic!("{} axiom should exist", expected_name));
 
-            let actual_lean = axiom.to_lean();
             assert_eq!(
-                actual_lean.trim(),
-                expected_lean.trim(),
+                axiom.to_string(),
+                *expected,
                 "{} axiom has incorrect structure",
                 expected_name
             );
@@ -365,17 +314,17 @@ mod tests {
     #[test]
     fn test_sorted_axiom_structures() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec sorted (l : ilist) : bool = match l with | Nil -> true | Cons { head = x; tail = xs } -> match xs with | Nil -> true | Cons { head = y; tail = ys } -> (x <= y) && sorted xs";
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let sorted_0_expected = "theorem sorted_0 : ∀ l : ilist, ∀ res : Bool, (((is_nil l) ∧ (true = res)) → (sorted l res)) := by prove_axiom";
-        let sorted_1_expected = "theorem sorted_1 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) ∧ (is_nil xs) ∧ (true = res)) → (sorted l res)) := by prove_axiom";
-        let sorted_2_expected = "theorem sorted_2 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, ∀ res_0 : Bool, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) ∧ ((is_cons xs) ∧ ((head xs) = y) ∧ ((tail xs) = ys)) ∧ (sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res)))) → (sorted l res)) := by prove_axiom";
+        let sorted_0_expected = "let[@axiom] sorted_0 (l : ilist) (res : bool) = (((is_nil l) && (true == res)))#==>((sorted l res))";
+        let sorted_1_expected = "let[@axiom] sorted_1 (l : ilist) (x : int) (xs : ilist) (res : bool) = ((((is_cons l) && ((head l) == x) && ((tail l) == xs)) && (is_nil xs) && (true == res)))#==>((sorted l res))";
+        let sorted_2_expected = "let[@axiom] sorted_2 (l : ilist) (x : int) (xs : ilist) (y : int) (ys : ilist) (res_0 : bool) (res : bool) = ((((is_cons l) && ((head l) == x) && ((tail l) == xs)) && ((is_cons xs) && ((head xs) == y) && ((tail xs) == ys)) && (sorted xs res_0) && ((((x <= y) && res_0) && res) || ((not (((x <= y) && res_0))) && (not (res))))))#==>((sorted l res))";
 
-        let sorted_0_fwd_expected = "theorem sorted_0_fwd : ∀ l : ilist, ∀ res : Bool, (((sorted l res) ∧ (is_nil l)) → (true = res)) := by prove_axiom";
-        let sorted_1_fwd_expected = "theorem sorted_1_fwd : ∀ l : ilist, ∀ res : Bool, ∀ x : Int, ∀ xs : ilist, (((sorted l res) ∧ ((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) ∧ (is_nil xs)) → (true = res)) := by prove_axiom";
-        let sorted_2_fwd_expected = "theorem sorted_2_fwd : ∀ l : ilist, ∀ res : Bool, ∀ x : Int, ∀ xs : ilist, ∀ y : Int, ∀ ys : ilist, (((sorted l res) ∧ ((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) ∧ ((is_cons xs) ∧ ((head xs) = y) ∧ ((tail xs) = ys))) → (∃ res_0 : Bool, ((sorted xs res_0) ∧ ((((x ≤ y) ∧ res_0) ∧ res) ∨ (¬(((x ≤ y) ∧ res_0)) ∧ ¬(res)))))) := by prove_axiom";
+        let sorted_0_fwd_expected = "let[@axiom] sorted_0_fwd (l : ilist) (res : bool) = (((sorted l res) && (is_nil l)))#==>((true == res))";
+        let sorted_1_fwd_expected = "let[@axiom] sorted_1_fwd (l : ilist) (res : bool) (x : int) (xs : ilist) = (((sorted l res) && ((is_cons l) && ((head l) == x) && ((tail l) == xs)) && (is_nil xs)))#==>((true == res))";
+        let sorted_2_fwd_expected = "let[@axiom] sorted_2_fwd (l : ilist) (res : bool) (x : int) (xs : ilist) (y : int) (ys : ilist) = (((sorted l res) && ((is_cons l) && ((head l) == x) && ((tail l) == xs)) && ((is_cons xs) && ((head xs) == y) && ((tail xs) == ys))))#==>(fun ((res_0 [@exists]) : bool) -> ((sorted xs res_0) && ((((x <= y) && res_0) && res) || ((not (((x <= y) && res_0))) && (not (res))))))";
 
-        assert_axiom_lean_output(
+        assert_axiom_output(
             &axioms,
             &[
                 ("sorted_0", sorted_0_expected),
@@ -386,43 +335,37 @@ mod tests {
                 ("sorted_2_fwd", sorted_2_fwd_expected),
             ],
         );
-
-        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
     fn test_generate_axioms_from_mem_function() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec mem (l : ilist) (x : int) : bool = match l with | Nil -> false | Cons { head = h; tail = t } -> (h = x) || mem t x";
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let mem_0_expected = "theorem mem_0 : ∀ l : ilist, ∀ x : Int, ∀ res : Bool, (((is_nil l) ∧ (false = res)) → (mem l x res)) := by prove_axiom";
-        let mem_1_expected = "theorem mem_1 : ∀ l : ilist, ∀ x : Int, ∀ h : Int, ∀ t : ilist, ∀ res_0 : Bool, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t)) ∧ (mem t x res_0) ∧ ((((h = x) ∨ res_0) ∧ res) ∨ (¬(((h = x) ∨ res_0)) ∧ ¬(res)))) → (mem l x res)) := by prove_axiom";
+        let mem_0_expected = "let[@axiom] mem_0 (l : ilist) (x : int) (res : bool) = (((is_nil l) && (false == res)))#==>((mem l x res))";
+        let mem_1_expected = "let[@axiom] mem_1 (l : ilist) (x : int) (h : int) (t : ilist) (res_0 : bool) (res : bool) = ((((is_cons l) && ((head l) == h) && ((tail l) == t)) && (mem t x res_0) && ((((h == x) || res_0) && res) || ((not (((h == x) || res_0))) && (not (res))))))#==>((mem l x res))";
 
-        assert_axiom_lean_output(
+        assert_axiom_output(
             &axioms,
             &[("mem_0", mem_0_expected), ("mem_1", mem_1_expected)],
         );
-
-        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
     fn test_generate_axioms_from_all_eq_function() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons { head = h; tail = t } -> (h = x) && all_eq t x";
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let all_eq_0_expected = "theorem all_eq_0 : ∀ l : ilist, ∀ x : Int, ∀ res : Bool, (((is_nil l) ∧ (true = res)) → (all_eq l x res)) := by prove_axiom";
-        let all_eq_1_expected = "theorem all_eq_1 : ∀ l : ilist, ∀ x : Int, ∀ h : Int, ∀ t : ilist, ∀ res_0 : Bool, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t)) ∧ (all_eq t x res_0) ∧ ((((h = x) ∧ res_0) ∧ res) ∨ (¬(((h = x) ∧ res_0)) ∧ ¬(res)))) → (all_eq l x res)) := by prove_axiom";
+        let all_eq_0_expected = "let[@axiom] all_eq_0 (l : ilist) (x : int) (res : bool) = (((is_nil l) && (true == res)))#==>((all_eq l x res))";
+        let all_eq_1_expected = "let[@axiom] all_eq_1 (l : ilist) (x : int) (h : int) (t : ilist) (res_0 : bool) (res : bool) = ((((is_cons l) && ((head l) == h) && ((tail l) == t)) && (all_eq t x res_0) && ((((h == x) && res_0) && res) || ((not (((h == x) && res_0))) && (not (res))))))#==>((all_eq l x res))";
 
-        assert_axiom_lean_output(
+        assert_axiom_output(
             &axioms,
             &[
                 ("all_eq_0", all_eq_0_expected),
                 ("all_eq_1", all_eq_1_expected),
             ],
         );
-
-        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
@@ -433,14 +376,14 @@ mod tests {
               match t with
               | Leaf -> true
               | Node { value = y; left = l; right = r } -> x <= y && lower_bound l x && lower_bound r x";
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let lb_0_expected = "theorem lower_bound_0 : ∀ t : tree, ∀ x : Int, ∀ res : Bool, (((is_leaf t) ∧ (true = res)) → (lower_bound t x res)) := by prove_axiom";
-        let lb_1_expected = "theorem lower_bound_1 : ∀ t : tree, ∀ x : Int, ∀ y : Int, ∀ l : tree, ∀ r : tree, ∀ res_0 : Bool, ∀ res_1 : Bool, ∀ res : Bool, ((((is_node t) ∧ ((value t) = y) ∧ ((left t) = l) ∧ ((right t) = r)) ∧ (lower_bound l x res_0) ∧ (lower_bound r x res_1) ∧ ((((x ≤ y) ∧ (res_0 ∧ res_1)) ∧ res) ∨ (¬(((x ≤ y) ∧ (res_0 ∧ res_1))) ∧ ¬(res)))) → (lower_bound t x res)) := by prove_axiom";
+        let lb_0_expected = "let[@axiom] lower_bound_0 (t : tree) (x : int) (res : bool) = (((is_leaf t) && (true == res)))#==>((lower_bound t x res))";
+        let lb_1_expected = "let[@axiom] lower_bound_1 (t : tree) (x : int) (y : int) (l : tree) (r : tree) (res_0 : bool) (res_1 : bool) (res : bool) = ((((is_node t) && ((value t) == y) && ((left t) == l) && ((right t) == r)) && (lower_bound l x res_0) && (lower_bound r x res_1) && ((((x <= y) && (res_0 && res_1)) && res) || ((not (((x <= y) && (res_0 && res_1)))) && (not (res))))))#==>((lower_bound t x res))";
 
-        let lb_1_fwd_expected = "theorem lower_bound_1_fwd : ∀ t : tree, ∀ x : Int, ∀ res : Bool, ∀ y : Int, ∀ l : tree, ∀ r : tree, (((lower_bound t x res) ∧ ((is_node t) ∧ ((value t) = y) ∧ ((left t) = l) ∧ ((right t) = r))) → (∃ res_0 : Bool, (∃ res_1 : Bool, ((lower_bound l x res_0) ∧ (lower_bound r x res_1) ∧ ((((x ≤ y) ∧ (res_0 ∧ res_1)) ∧ res) ∨ (¬(((x ≤ y) ∧ (res_0 ∧ res_1))) ∧ ¬(res))))))) := by prove_axiom";
+        let lb_1_fwd_expected = "let[@axiom] lower_bound_1_fwd (t : tree) (x : int) (res : bool) (y : int) (l : tree) (r : tree) = (((lower_bound t x res) && ((is_node t) && ((value t) == y) && ((left t) == l) && ((right t) == r))))#==>(fun ((res_0 [@exists]) : bool) -> fun ((res_1 [@exists]) : bool) -> ((lower_bound l x res_0) && (lower_bound r x res_1) && ((((x <= y) && (res_0 && res_1)) && res) || ((not (((x <= y) && (res_0 && res_1)))) && (not (res))))))";
 
-        assert_axiom_lean_output(
+        assert_axiom_output(
             &axioms,
             &[
                 ("lower_bound_0", lb_0_expected),
@@ -448,8 +391,6 @@ mod tests {
                 ("lower_bound_1_fwd", lb_1_fwd_expected),
             ],
         );
-
-        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
@@ -460,76 +401,57 @@ mod tests {
              match t with
              | Leaf -> true
              | Node { value = y; left = l; right = r } -> y <= x && upper_bound l x && upper_bound r x";
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let expected = "theorem upper_bound_0 : ∀ t : tree, ∀ x : Int, ∀ res : Bool, (((is_leaf t) ∧ (true = res)) → (upper_bound t x res)) := by prove_axiom";
-        assert_axiom_lean_output(&axioms, &[("upper_bound_0", expected)]);
-
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        let expected = "let[@axiom] upper_bound_0 (t : tree) (x : int) (res : bool) = (((is_leaf t) && (true == res)))#==>((upper_bound t x res))";
+        assert_axiom_output(&axioms, &[("upper_bound_0", expected)]);
     }
 
     #[test]
     fn test_len_1_axiom_structure() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = x; tail = xs } -> 1 + len xs";
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let len_1_expected = "theorem len_1 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ res_0 : Int, ∀ res : Int, ((((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) ∧ (len xs res_0) ∧ ((1 + res_0) = res)) → (len l res)) := by prove_axiom";
+        let len_1_expected = "let[@axiom] len_1 (l : ilist) (x : int) (xs : ilist) (res_0 : int) (res : int) = ((((is_cons l) && ((head l) == x) && ((tail l) == xs)) && (len xs res_0) && ((1 + res_0) == res)))#==>((len l res))";
 
-        assert_axiom_lean_output(&axioms, &[("len_1", len_1_expected)]);
-
-        test_helpers::validate_axioms(parsed_nodes, axioms);
+        assert_axiom_output(&axioms, &[("len_1", len_1_expected)]);
     }
 
     #[test]
     fn test_len_fwd_axiom_structures() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = x; tail = xs } -> 1 + len xs";
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let len_0_fwd_expected = "theorem len_0_fwd : ∀ l : ilist, ∀ res : Int, (((len l res) ∧ (is_nil l)) → (0 = res)) := by prove_axiom";
-        let len_1_fwd_expected = "theorem len_1_fwd : ∀ l : ilist, ∀ res : Int, ∀ x : Int, ∀ xs : ilist, (((len l res) ∧ ((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs))) → (∃ res_0 : Int, ((len xs res_0) ∧ ((1 + res_0) = res)))) := by prove_axiom";
+        let len_0_fwd_expected = "let[@axiom] len_0_fwd (l : ilist) (res : int) = (((len l res) && (is_nil l)))#==>((0 == res))";
+        let len_1_fwd_expected = "let[@axiom] len_1_fwd (l : ilist) (res : int) (x : int) (xs : ilist) = (((len l res) && ((is_cons l) && ((head l) == x) && ((tail l) == xs))))#==>(fun ((res_0 [@exists]) : int) -> ((len xs res_0) && ((1 + res_0) == res)))";
 
-        assert_axiom_lean_output(
+        assert_axiom_output(
             &axioms,
             &[
                 ("len_0_fwd", len_0_fwd_expected),
                 ("len_1_fwd", len_1_fwd_expected),
             ],
         );
-
-        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 
     #[test]
     fn test_height_existential_scoping_and_structures() {
-        use crate::axiom_generator::AxiomGenerator;
-
         let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }\nlet [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> ite (height l > height r) (1 + height l) (1 + height r)";
 
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let height_fn = test_helpers::find_function(&parsed_nodes, "height");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&height_fn)
-            .expect("Failed to prepare height");
+        let height_1_expected = "let[@axiom] height_1 (t : tree) (v : int) (l : tree) (r : tree) (res_0 : int) (res_1 : int) (res : int) = ((((is_node t) && ((value t) == v) && ((left t) == l) && ((right t) == r)) && (height l res_0) && (height r res_1) && (res_0 > res_1) && ((1 + res_0) == res)))#==>((height t res))";
 
-        let builder = generator.build_all();
-        let all_axioms = builder.generate_all();
-        let axioms = AxiomBuilderState::exported_axioms(&all_axioms);
-
-        let height_1_expected = "theorem height_1 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res_0 : Int, ∀ res_1 : Int, ∀ res : Int, ((((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) ∧ (height l res_0) ∧ (height r res_1) ∧ (res_0 > res_1) ∧ ((1 + res_0) = res)) → (height t res)) := by prove_axiom";
-
-        let height_2_expected = "theorem height_2 : ∀ t : tree, ∀ v : Int, ∀ l : tree, ∀ r : tree, ∀ res_0 : Int, ∀ res_1 : Int, ∀ res : Int, ((((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r)) ∧ (height l res_0) ∧ (height r res_1) ∧ ¬((res_0 > res_1)) ∧ ((1 + res_1) = res)) → (height t res)) := by prove_axiom";
+        let height_2_expected = "let[@axiom] height_2 (t : tree) (v : int) (l : tree) (r : tree) (res_0 : int) (res_1 : int) (res : int) = ((((is_node t) && ((value t) == v) && ((left t) == l) && ((right t) == r)) && (height l res_0) && (height r res_1) && (not ((res_0 > res_1))) && ((1 + res_1) == res)))#==>((height t res))";
 
         // Productive eliminator: the recursive children `res_0`/`res_1` are produced existentially
         // and the branch guard gates only the result equality, so z3 instantiates on the parent
         // `height t res` rather than presupposing the children.
-        let height_1_fwd_expected = "theorem height_1_fwd : ∀ t : tree, ∀ res : Int, ∀ v : Int, ∀ l : tree, ∀ r : tree, (((height t res) ∧ ((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r))) → (∃ res_0 : Int, (∃ res_1 : Int, ((height l res_0) ∧ (height r res_1) ∧ ((res_0 > res_1) → ((1 + res_0) = res)))))) := by prove_axiom";
+        let height_1_fwd_expected = "let[@axiom] height_1_fwd (t : tree) (res : int) (v : int) (l : tree) (r : tree) = (((height t res) && ((is_node t) && ((value t) == v) && ((left t) == l) && ((right t) == r))))#==>(fun ((res_0 [@exists]) : int) -> fun ((res_1 [@exists]) : int) -> ((height l res_0) && (height r res_1) && ((res_0 > res_1))#==>(((1 + res_0) == res))))";
 
-        let height_2_fwd_expected = "theorem height_2_fwd : ∀ t : tree, ∀ res : Int, ∀ v : Int, ∀ l : tree, ∀ r : tree, (((height t res) ∧ ((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r))) → (∃ res_0 : Int, (∃ res_1 : Int, ((height l res_0) ∧ (height r res_1) ∧ (¬((res_0 > res_1)) → ((1 + res_1) = res)))))) := by prove_axiom";
+        let height_2_fwd_expected = "let[@axiom] height_2_fwd (t : tree) (res : int) (v : int) (l : tree) (r : tree) = (((height t res) && ((is_node t) && ((value t) == v) && ((left t) == l) && ((right t) == r))))#==>(fun ((res_0 [@exists]) : int) -> fun ((res_1 [@exists]) : int) -> ((height l res_0) && (height r res_1) && ((not ((res_0 > res_1))))#==>(((1 + res_1) == res))))";
 
-        assert_axiom_lean_output(
+        assert_axiom_output(
             &axioms,
             &[
                 ("height_1", height_1_expected),
@@ -538,30 +460,12 @@ mod tests {
                 ("height_2_fwd", height_2_fwd_expected),
             ],
         );
-
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        builder
-            .validate_with_lean(all_axioms, parsed_nodes, &type_constructors)
-            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
     fn test_domain_axiom_generated_for_len_with_patterns() {
-        use crate::axiom_generator::AxiomGenerator;
-
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec len (l : ilist) : int = match l with | Nil -> 0 | Cons { head = x; tail = xs } -> 1 + len xs";
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let len_fn = test_helpers::find_function(&parsed_nodes, "len");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
-
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&len_fn)
-            .expect("Failed to prepare len");
-
-        let builder = generator.build_all();
-        let all_axioms = builder.generate_all();
-        let axioms = AxiomBuilderState::exported_axioms(&all_axioms);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
         let domain_axiom = axioms
             .iter()
@@ -569,141 +473,62 @@ mod tests {
             .expect("len function should generate len_geq_0 axiom due to non-negativity patterns");
 
         assert!(domain_axiom.is_domain_specific());
-
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        builder
-            .validate_with_lean(all_axioms, parsed_nodes, &type_constructors)
-            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
     fn test_domain_axiom_not_generated_without_patterns() {
-        use crate::axiom_generator::AxiomGenerator;
-
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }\nlet [@simp] [@grind] rec all_eq (l : ilist) (x : int) : bool = match l with | Nil -> true | Cons { head = h; tail = t } -> (h = x) && all_eq t x";
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let all_eq_fn = test_helpers::find_function(&parsed_nodes, "all_eq");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
-
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&all_eq_fn)
-            .expect("Failed to prepare all_eq");
-
-        let builder = generator.build_all();
-        let all_axioms = builder.generate_all();
-        let axioms = AxiomBuilderState::exported_axioms(&all_axioms);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
         let domain_axiom_count = axioms.iter().filter(|a| a.is_domain_specific()).count();
         assert_eq!(
             domain_axiom_count, 0,
             "bool-returning function should not generate domain axioms"
         );
-
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        builder
-            .validate_with_lean(all_axioms, parsed_nodes, &type_constructors)
-            .expect("Failed to validate axioms with Lean");
     }
 
     #[test]
     fn test_domain_axiom_for_tree_height() {
-        use crate::axiom_generator::AxiomGenerator;
-
         let program_str = "type [@grind] tree = Leaf | Node of { value : int; left : tree; right : tree }\nlet [@simp] [@grind] rec height (t : tree) : int = match t with | Leaf -> 0 | Node { value = v; left = l; right = r } -> ite (height l > height r) (1 + height l) (1 + height r)";
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let height_fn = test_helpers::find_function(&parsed_nodes, "height");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&height_fn)
-            .expect("Failed to prepare height");
-
-        let builder = generator.build_all();
-        let all_axioms = builder.generate_all();
-
-        all_axioms
+        axioms
             .iter()
             .find(|a| a.name == "height_geq_0")
             .expect("height function should generate height_geq_0 axiom");
 
-        let height_geq_0_expected = "@[simp, grind] theorem height_geq_0 : ∀ t : tree, ∀ n : Int, ((height t n) → (n ≥ 0)) := by prove_axiom";
+        let height_geq_0_expected =
+            "let[@axiom] height_geq_0 (t : tree) (n : int) = ((height t n))#==>((n >= 0))";
 
-        assert_axiom_lean_output(&all_axioms, &[("height_geq_0", height_geq_0_expected)]);
-
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        builder
-            .validate_with_lean(all_axioms, parsed_nodes, &type_constructors)
-            .expect("Failed to validate axioms with Lean");
+        assert_axiom_output(&axioms, &[("height_geq_0", height_geq_0_expected)]);
     }
 
     #[test]
     fn test_generate_axioms_from_is_even_function() {
-        use crate::axiom_generator::AxiomGenerator;
+        let program_str = "let [@grind] is_even (x : int) : bool = (x mod 2 = 0)";
 
-        let program_str = "let [@grind] rec is_even (x : int) : bool =
-  if x = 0 then true else
-    if x = 1 then false else
-      if x = (0-1) then false else
-        if x > 1 then is_even (x - 2) else
-          is_even (x + 2)";
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let mut parsed_nodes = test_helpers::parse_program(program_str);
-        let is_even_fn = test_helpers::find_function(&parsed_nodes, "is_even");
-        let type_constructors = test_helpers::extract_type_decls(&parsed_nodes);
-
-        let mut generator = AxiomGenerator::new(type_constructors.clone());
-        generator
-            .prepare_function(&is_even_fn)
-            .unwrap_or_else(|e| panic!("Failed to prepare is_even: {}", e));
-
-        let builder = generator.build_all();
-        let all_axioms = builder.generate_all();
-        let axioms = AxiomBuilderState::exported_axioms(&all_axioms);
-
-        assert_axiom_lean_output(
+        assert_axiom_output(
             &axioms,
             &[
                 (
                     "is_even_0",
-                    "theorem is_even_0 : ∀ x : Int, ∀ res : Bool, (((x = 0) ∧ (true = res)) → (is_even x res)) := by prove_axiom",
+                    "let[@axiom] is_even_0 (x : int) (res : bool) = (((((x mod 2) == 0) && res) || ((not (((x mod 2) == 0))) && (not (res)))))#==>((is_even x res))",
                 ),
                 (
-                    "is_even_1",
-                    "theorem is_even_1 : ∀ x : Int, ∀ res : Bool, ((¬((x = 0)) ∧ (x = 1) ∧ (false = res)) → (is_even x res)) := by prove_axiom",
-                ),
-                (
-                    "is_even_2",
-                    "theorem is_even_2 : ∀ x : Int, ∀ res : Bool, ((¬((x = 0)) ∧ ¬((x = 1)) ∧ (x = (0 - 1)) ∧ (false = res)) → (is_even x res)) := by prove_axiom",
-                ),
-                (
-                    "is_even_3",
-                    "theorem is_even_3 : ∀ x : Int, ∀ res_0 : Bool, ∀ res : Bool, ((¬((x = 0)) ∧ ¬((x = 1)) ∧ ¬((x = (0 - 1))) ∧ (x > 1) ∧ (is_even (x - 2) res_0) ∧ (res_0 = res)) → (is_even x res)) := by prove_axiom",
-                ),
-                (
-                    "is_even_4",
-                    "theorem is_even_4 : ∀ x : Int, ∀ res_1 : Bool, ∀ res : Bool, ((¬((x = 0)) ∧ ¬((x = 1)) ∧ ¬((x = (0 - 1))) ∧ ¬((x > 1)) ∧ (is_even (x + 2) res_1) ∧ (res_1 = res)) → (is_even x res)) := by prove_axiom",
+                    "is_even_0_fwd",
+                    "let[@axiom] is_even_0_fwd (x : int) (res : bool) = ((is_even x res))#==>(((((x mod 2) == 0) && res) || ((not (((x mod 2) == 0))) && (not (res)))))",
                 ),
             ],
         );
-
-        parsed_nodes = crate::wrap_all_functions(parsed_nodes);
-        builder
-            .validate_with_lean(all_axioms, parsed_nodes, &type_constructors)
-            .unwrap_or_else(|e| panic!("Failed to validate axioms with Lean: {}", e));
     }
 
     #[test]
     fn test_generate_axioms_from_all_even_function() {
         let program_str = "type [@grind] ilist = Nil | Cons of { head : int; tail : ilist }
 
-    let [@grind] rec is_even_num (x : int) : bool =
-    if x = 0 then true else
-    if x = 1 then false else
-      if x = (0-1) then false else
-        if x > 1 then is_even_num (x - 2) else
-          is_even_num (x + 2)
+    let [@grind] is_even_num (x : int) : bool = (x mod 2 = 0)
 
     let [@grind] rec all_even (l : ilist) : bool =
     match l with
@@ -711,19 +536,17 @@ mod tests {
     | Cons { head = x; tail = xs } ->
       is_even_num x && all_even xs";
 
-        let (parsed_nodes, axioms) = test_helpers::generate_axioms_with_wrapper(program_str);
+        let axioms = test_helpers::generate_program_axioms(program_str);
 
-        let all_even_0_expected = "theorem all_even_0 : ∀ l : ilist, ∀ res : Bool, (((is_nil l) ∧ (true = res)) → (all_even l res)) := by prove_axiom";
-        let all_even_1_expected = "theorem all_even_1 : ∀ l : ilist, ∀ x : Int, ∀ xs : ilist, ∀ res_2 : Bool, ∀ res_3 : Bool, ∀ res : Bool, ((((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs)) ∧ (is_even_num x res_2) ∧ (all_even xs res_3) ∧ (((res_2 ∧ res_3) ∧ res) ∨ (¬((res_2 ∧ res_3)) ∧ ¬(res)))) → (all_even l res)) := by prove_axiom";
+        let all_even_0_expected = "let[@axiom] all_even_0 (l : ilist) (res : bool) = (((is_nil l) && (true == res)))#==>((all_even l res))";
+        let all_even_1_expected = "let[@axiom] all_even_1 (l : ilist) (x : int) (xs : ilist) (res_0 : bool) (res_1 : bool) (res : bool) = ((((is_cons l) && ((head l) == x) && ((tail l) == xs)) && (is_even_num x res_0) && (all_even xs res_1) && (((res_0 && res_1) && res) || ((not ((res_0 && res_1))) && (not (res))))))#==>((all_even l res))";
 
-        assert_axiom_lean_output(
+        assert_axiom_output(
             &axioms,
             &[
                 ("all_even_0", all_even_0_expected),
                 ("all_even_1", all_even_1_expected),
             ],
         );
-
-        test_helpers::validate_axioms(parsed_nodes, axioms);
     }
 }

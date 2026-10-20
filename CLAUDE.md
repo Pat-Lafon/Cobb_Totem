@@ -1,26 +1,18 @@
-# Cobb_Totem — OCaml-to-Lean 4 axiom generator
+# Cobb_Totem — OCaml axiom generator
 
 Parses an OCaml program (one datatype plus recursive predicate/measure functions) and emits
-`let[@axiom]` declarations describing each function as a *relation* over its inputs and result. Every
-axiom is proved through Lean before it leaves the tool, so what Cobb consumes downstream is a set Lean
-has already accepted.
+`let[@axiom]` declarations describing each function as a *relation* over its inputs and result.
+It checks their structure, not their provability; that is proved downstream, against the SMT encoding
+Cobb solves.
 
 ## Build and run
 
 `cargo run -- examples/list_len.ml` prints the axioms, and is the fastest way to see the full emitted
-vocabulary; `--export-axioms <path>` writes them to a file instead, and `--features debug` dumps each
-generated Lean file. `cargo test` takes minutes rather than seconds — every layer spawns
-`lake env lean`.
-
-`unknown module prefix 'ProofAutomation'` means the Lean side isn't built: `lake update`, then
-`lake build ProofAutomation.ProveAxiom`. Bare `lake build` targets the default root `Main.lean`, which
-is gitignored, so it fails in a fresh checkout. Under Claude Code, pasiv's lakefile builds into
-`.lake/build-<CLAUDE_CODE_SESSION_ID>`, so every new session starts unbuilt and needs that build once.
+vocabulary; `--export-axioms <path>` writes them to a file instead.
 
 ## Axiom format
 
-- Relation predicates and naming: `build_axioms_for` in `src/axiom_builder_state.rs`; helper
-  predicates: `TypeDecl::generate_helper_predicates`.
+- Relation predicates and naming: `build_axioms_for` in `src/axiom_builder_state.rs`.
 - Every parameter in the header is universal, written `(name : type)`. Existentials appear only inside
   the body, as `fun ((name [@exists]) : type) -> …` binders.
 - `#==>` is implication; everything else is ordinary OCaml-shaped syntax. `Proposition::Equality`,
@@ -34,10 +26,6 @@ instantiation, while a function definition forces unconditional unfolding: a ter
 `num_black(left(left(…)))` term generation. Don't propose IR variants (an `IsFunction` on
 `Proposition`) or backend shortcuts that lower a predicate to a function definition. Dedup ideas that
 operate at the axiom level are fine; ideas that change the *kind* of object emitted are not.
-
-That governs the *exported* axioms. The Lean file built for validation does define each predicate —
-`wrap_all_functions` renames `f` to `f_impl` and adds `def f args res : Bool := f_impl args == res`,
-which is what lets Lean discharge the axioms at all. That `def` never reaches Cobb.
 
 **Every per-branch introduction `{pred}_{idx}` needs a paired forward-elimination `{pred}_{idx}_fwd`**,
 emitted by `build_branch_elim_axiom_for` in `src/axiom_builder_state.rs`.
@@ -57,23 +45,19 @@ hand-add to `_proposed.ml` at implementation time, not by keeping or adding an a
 
 ## Architecture
 
-Pipeline stages: `src/lib.rs` module doc.
-
-`Axiom::validate` runs over every axiom inside `generate_all` and panics on a builder bug — free
-variable, duplicate binder, universal-after-existential.
-
-Every axiom is discharged by the shared `prove_axiom` tactic from pasiv's `ProofAutomation` library;
-`Axiom::generate_proof_tactic` and `domain_axiom_builder.rs` both emit it uniformly, so there is no
-per-axiom tactic synthesis and a shape `prove_axiom` cannot close fails loudly at validation rather
-than falling back. `lakefile.lean` requires `Pat-Lafon/pasiv` by git at the rev `lake-manifest.json`
-pins; both packages must pin the same Lean toolchain in `lean-toolchain`.
+Pipeline stages: `src/lib.rs` module doc. `generate_all` checks each axiom's structure
+(`src/axiom_validation.rs`: quantifier order, free variables, duplicate binders) and panics on a
+malformed one.
 
 ## Testing
 
-Three layers, all spawning `lake env lean`: `tests/integration_tests.rs` (one end-to-end test per file
-in `examples/`), `src/integration_tests.rs` (the same pipeline over inline program strings), and
-per-module `#[cfg(test)]` units. The axiom-shape tests in `axiom_builder_state.rs` pin exact Lean
-output string-for-string — those are what a shape change breaks first.
+Three layers: `tests/integration_tests.rs` (one end-to-end test per file in `examples/`),
+`src/integration_tests.rs` (the same pipeline over inline program strings), and per-module
+`#[cfg(test)]` units. The axiom-shape tests in `axiom_builder_state.rs` pin exact `let[@axiom]` output
+string-for-string — those are what a shape change breaks first.
+
+Every shape those tests pin is also proved by a Totem benchmark, except a measure recursing on an
+`Int`, which nothing tests or proves.
 
 ## Visibility
 

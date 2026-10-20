@@ -1,44 +1,10 @@
 #[cfg(test)]
 mod integration_tests {
-    use crate::axiom_generator::AxiomGenerator;
-    use crate::ocamlparser::OcamlParser;
-    use crate::prog_ir::AstNode;
+    use crate::test_helpers::generate_program_axioms;
 
+    /// `generate_all` validates every axiom it builds, panicking on a malformed one.
     fn validate_program(program_str: &str) {
-        let parsed_nodes = OcamlParser::parse_nodes(program_str)
-            .unwrap_or_else(|e| panic!("Failed to parse program: {}", e));
-
-        let type_decls = parsed_nodes
-            .iter()
-            .filter_map(|node| match node {
-                AstNode::TypeDeclaration(type_decl) => Some(type_decl.clone()),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-
-        let mut all_nodes = parsed_nodes.clone();
-        let mut generator = AxiomGenerator::new(type_decls.clone());
-
-        // Prepare all functions in the program
-        for node in &parsed_nodes {
-            if let AstNode::LetBinding(binding) = node {
-                generator
-                    .prepare_function(binding)
-                    .expect("Failed to prepare function");
-            }
-        }
-
-        // Wrap all functions with impl+wrapper
-        all_nodes = crate::wrap_all_functions(all_nodes);
-
-        // Build all axioms at once
-        let builder = generator.build_all();
-        let axioms = builder.generate_all();
-
-        // Validate through Lean backend
-        builder
-            .validate_with_lean(axioms, all_nodes.clone(), &type_decls)
-            .unwrap_or_else(|e| panic!("Generated axioms failed Lean validation:\n{}", e));
+        generate_program_axioms(program_str);
     }
 
     #[test]

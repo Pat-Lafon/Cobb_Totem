@@ -60,19 +60,11 @@ pub(crate) fn generate(binding: &LetBinding) -> Vec<Axiom> {
             ))),
         );
 
-        let mut axiom = Axiom {
-            name: format!("{}{}", binding.name, DOMAIN_AXIOM_SUFFIX),
-            params: axiom_params,
+        domain_axioms.push(Axiom::new(
+            format!("{}{}", binding.name, DOMAIN_AXIOM_SUFFIX),
+            axiom_params,
             body,
-            proof: None,
-            attributes: vec!["simp".to_string(), "grind".to_string()],
-            is_internal: false,
-        };
-
-        // Discharge via the shared `prove_axiom` tactic; its early-induction +
-        // simp_all + grind strategy covers the former `fun_induction … with grind`.
-        axiom.proof = Some("prove_axiom".to_string());
-        domain_axioms.push(axiom);
+        ));
     }
 
     domain_axioms
@@ -95,9 +87,7 @@ mod tests {
             ],
             body: crate::prog_ir::Expression::Literal(crate::Literal::Int(0)),
             return_type: Some(Type::Int),
-            attributes: vec![],
             is_recursive: false,
-            termination_proof: None,
         };
 
         let axioms = generate(&binding);
@@ -119,9 +109,7 @@ mod tests {
             params: vec![(VarName("l".into()), Type::Int)],
             body: crate::prog_ir::Expression::Literal(crate::Literal::Int(0)),
             return_type: Some(Type::Int),
-            attributes: vec![],
             is_recursive: false,
-            termination_proof: None,
         };
 
         let axioms = generate(&binding);

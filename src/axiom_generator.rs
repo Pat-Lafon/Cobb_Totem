@@ -6,9 +6,8 @@ use crate::VarName;
 use crate::axiom_builder_state::{
     AxiomBuilderState, BodyPropositionData, DETERMINISM_PARAMS, PreparedBinding,
 };
-use crate::create_wrapper::RESULT_PARAM;
 use crate::prog_ir::{LetBinding, Type, TypeDecl};
-use crate::spec_ir::{Expression, Parameter, Proposition};
+use crate::spec_ir::{Expression, Parameter, Proposition, RESULT_PARAM};
 
 /// Names reserved by axiom builders (result and the two operands of the functional axiom).
 /// A user-supplied param name colliding with one of these would produce a duplicate quantifier.
@@ -493,8 +492,7 @@ impl AxiomGenerator {
         &self,
         mut body_prop: BodyPropositionData,
     ) -> BodyPropositionData {
-        let wrapped =
-            self.wrap_result_equality(&Proposition::Expr(body_prop.result_expr.clone()));
+        let wrapped = self.wrap_result_equality(&Proposition::Expr(body_prop.result_expr.clone()));
         body_prop.result_expr = wrapped.as_expr().clone();
         body_prop
     }
@@ -539,34 +537,6 @@ impl AxiomGenerator {
                 result_expr: Expression::Literal(literal.clone()),
                 additional_parameters: vec![],
             }],
-            crate::prog_ir::Expression::UnaryOp(unary_op, expression) => {
-                let combined = self
-                    .extract_exprs_with_steps(vec![expression], cache)
-                    .unwrap_or_else(|e| panic!("UnaryOp operand: {}", e));
-
-                combined
-                    .into_iter()
-                    .map(|extraction| {
-                        assert_eq!(
-                            extraction.expressions.len(),
-                            1,
-                            "UnaryOp requires exactly 1 expression"
-                        );
-                        let mut all_steps = extraction.input_constraints;
-                        all_steps.extend(extraction.body_steps);
-                        BodyPropositionData {
-                            input_constraints: vec![],
-                            body_steps: all_steps,
-                            guard: vec![],
-                            result_expr: Expression::UnaryOp(
-                                *unary_op,
-                                Box::new(extraction.expressions[0].clone()),
-                            ),
-                            additional_parameters: extraction.parameters,
-                        }
-                    })
-                    .collect()
-            }
             crate::prog_ir::Expression::BinaryOp(expression, binary_op, expression1) => {
                 let combined = self
                     .extract_exprs_with_steps(vec![&expression, &expression1], cache)
@@ -800,9 +770,9 @@ impl AxiomGenerator {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ToLean, test_helpers};
+    use crate::test_helpers;
 
-    /// Assert that axiom branches match expected Lean output
+    /// Assert that axiom branches render as the expected propositions
     fn assert_axiom_branches(actual: &[Vec<crate::spec_ir::Proposition>], expected: &[Vec<&str>]) {
         assert_eq!(
             actual.len(),
@@ -812,10 +782,10 @@ mod tests {
             actual.len()
         );
         for (i, (actual_branch, expected_branch)) in actual.iter().zip(expected).enumerate() {
-            let actual_lean: Vec<String> = actual_branch.iter().map(|p| p.to_lean()).collect();
+            let actual: Vec<String> = actual_branch.iter().map(|p| p.to_string()).collect();
             let expected_strings: Vec<String> =
                 expected_branch.iter().map(|s| s.to_string()).collect();
-            assert_eq!(actual_lean, expected_strings, "Branch {} mismatch", i);
+            assert_eq!(actual, expected_strings, "Branch {} mismatch", i);
         }
     }
 
@@ -829,10 +799,10 @@ mod tests {
         assert_axiom_branches(
             &props,
             &[
-                vec!["(is_nil l)", "(true = res)"],
+                vec!["(is_nil l)", "(true == res)"],
                 vec![
-                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
-                    "((all_positive t res_0) ∧ (((h > 0) ∧ res_0) = res))",
+                    "((is_cons l) && ((head l) == h) && ((tail l) == t))",
+                    "((all_positive t res_0) && (((h > 0) && res_0) == res))",
                 ],
             ],
         );
@@ -848,10 +818,10 @@ mod tests {
         assert_axiom_branches(
             &props,
             &[
-                vec!["(is_nil l)", "(false = res)"],
+                vec!["(is_nil l)", "(false == res)"],
                 vec![
-                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
-                    "((mem x t res_0) ∧ (((h = x) ∨ res_0) = res))",
+                    "((is_cons l) && ((head l) == h) && ((tail l) == t))",
+                    "((mem x t res_0) && (((h == x) || res_0) == res))",
                 ],
             ],
         );
@@ -865,10 +835,10 @@ mod tests {
         assert_axiom_branches(
             &props,
             &[
-                vec!["(is_nil l)", "(true = res)"],
+                vec!["(is_nil l)", "(true == res)"],
                 vec![
-                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
-                    "((all_eq t x res_0) ∧ (((h = x) ∧ res_0) = res))",
+                    "((is_cons l) && ((head l) == h) && ((tail l) == t))",
+                    "((all_eq t x res_0) && (((h == x) && res_0) == res))",
                 ],
             ],
         );
@@ -882,10 +852,10 @@ mod tests {
         assert_axiom_branches(
             &props,
             &[
-                vec!["(is_nil l)", "(0 = res)"],
+                vec!["(is_nil l)", "(0 == res)"],
                 vec![
-                    "((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs))",
-                    "((len xs res_0) ∧ ((1 + res_0) = res))",
+                    "((is_cons l) && ((head l) == x) && ((tail l) == xs))",
+                    "((len xs res_0) && ((1 + res_0) == res))",
                 ],
             ],
         );
@@ -899,16 +869,16 @@ mod tests {
         assert_axiom_branches(
             &props,
             &[
-                vec!["(is_nil l)", "(true = res)"],
+                vec!["(is_nil l)", "(true == res)"],
                 vec![
-                    "((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs))",
+                    "((is_cons l) && ((head l) == x) && ((tail l) == xs))",
                     "(is_nil xs)",
-                    "(true = res)",
+                    "(true == res)",
                 ],
                 vec![
-                    "((is_cons l) ∧ ((head l) = x) ∧ ((tail l) = xs))",
-                    "((is_cons xs) ∧ ((head xs) = y) ∧ ((tail xs) = ys))",
-                    "((sorted xs res_0) ∧ (((x ≤ y) ∧ res_0) = res))",
+                    "((is_cons l) && ((head l) == x) && ((tail l) == xs))",
+                    "((is_cons xs) && ((head xs) == y) && ((tail xs) == ys))",
+                    "((sorted xs res_0) && (((x <= y) && res_0) == res))",
                 ],
             ],
         );
@@ -922,16 +892,16 @@ mod tests {
         assert_axiom_branches(
             &props,
             &[
-                vec!["(is_nil d)", "(0 = res)"],
+                vec!["(is_nil d)", "(0 == res)"],
                 vec![
-                    "((is_val d) ∧ ((value d) = x))",
+                    "((is_val d) && ((value d) == x))",
                     "(x > 0)",
-                    "((1 + x) = res)",
+                    "((1 + x) == res)",
                 ],
                 vec![
-                    "((is_val d) ∧ ((value d) = x))",
-                    "¬((x > 0))",
-                    "((1 + 0) = res)",
+                    "((is_val d) && ((value d) == x))",
+                    "(not ((x > 0)))",
+                    "((1 + 0) == res)",
                 ],
             ],
         );
@@ -949,14 +919,14 @@ mod tests {
         assert_axiom_branches(
             &props,
             &[
-                vec!["(is_leaf t)", "(0 = res)"],
+                vec!["(is_leaf t)", "(0 == res)"],
                 vec![
-                    "((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r))",
-                    "((height l res_0) ∧ (height r res_1) ∧ (res_0 > res_1) ∧ ((1 + res_0) = res))",
+                    "((is_node t) && ((value t) == v) && ((left t) == l) && ((right t) == r))",
+                    "((height l res_0) && (height r res_1) && (res_0 > res_1) && ((1 + res_0) == res))",
                 ],
                 vec![
-                    "((is_node t) ∧ ((value t) = v) ∧ ((left t) = l) ∧ ((right t) = r))",
-                    "((height l res_0) ∧ (height r res_1) ∧ ¬((res_0 > res_1)) ∧ ((1 + res_1) = res))",
+                    "((is_node t) && ((value t) == v) && ((left t) == l) && ((right t) == r))",
+                    "((height l res_0) && (height r res_1) && (not ((res_0 > res_1))) && ((1 + res_1) == res))",
                 ],
             ],
         );
@@ -970,16 +940,16 @@ mod tests {
         assert_axiom_branches(
             &props,
             &[
-                vec!["(is_nil l)", "(0 = res)"],
+                vec!["(is_nil l)", "(0 == res)"],
                 vec![
-                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
+                    "((is_cons l) && ((head l) == h) && ((tail l) == t))",
                     "(h > 0)",
-                    "(h = res)",
+                    "(h == res)",
                 ],
                 vec![
-                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
-                    "¬((h > 0))",
-                    "(0 = res)",
+                    "((is_cons l) && ((head l) == h) && ((tail l) == t))",
+                    "(not ((h > 0)))",
+                    "(0 == res)",
                 ],
             ],
         );
@@ -993,14 +963,14 @@ mod tests {
         assert_axiom_branches(
             &props,
             &[
-                vec!["(is_nil l)", "(0 = res)"],
+                vec!["(is_nil l)", "(0 == res)"],
                 vec![
-                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
-                    "((max_elem t res_0) ∧ (h ≥ res_0) ∧ (h = res))",
+                    "((is_cons l) && ((head l) == h) && ((tail l) == t))",
+                    "((max_elem t res_0) && (h >= res_0) && (h == res))",
                 ],
                 vec![
-                    "((is_cons l) ∧ ((head l) = h) ∧ ((tail l) = t))",
-                    "((max_elem t res_0) ∧ ¬((h ≥ res_0)) ∧ (res_0 = res))",
+                    "((is_cons l) && ((head l) == h) && ((tail l) == t))",
+                    "((max_elem t res_0) && (not ((h >= res_0))) && (res_0 == res))",
                 ],
             ],
         );
