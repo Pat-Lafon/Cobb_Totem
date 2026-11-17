@@ -46,9 +46,6 @@ pub enum Proposition {
     /// Implication: p #==> q
     Implication(Box<Proposition>, Box<Proposition>),
 
-    /// Equality: p #== q
-    Equality(Box<Proposition>, Box<Proposition>),
-
     /// Conjunction: p && q && ...
     And(Vec<Proposition>),
 
@@ -57,9 +54,6 @@ pub enum Proposition {
 
     /// Negation: not p
     Not(Box<Proposition>),
-
-    /// Bi-implication: iff p q
-    Iff(Box<Proposition>, Box<Proposition>),
 
     /// Existential quantification: ∃ x : type, body
     Existential(Parameter, Box<Proposition>),
@@ -298,13 +292,10 @@ impl Proposition {
             }
             Proposition::Or(p, q) => Proposition::Or(Box::new((*p).map(f)), Box::new((*q).map(f))),
             Proposition::Not(p) => Proposition::Not(Box::new((*p).map(f))),
-            Proposition::Iff(p, q) => {
-                Proposition::Iff(Box::new((*p).map(f)), Box::new((*q).map(f)))
-            }
             Proposition::Existential(param, body) => {
                 Proposition::Existential(param, Box::new((*body).map(f)))
             }
-            other => other,
+            leaf @ (Proposition::Expr(_) | Proposition::Predicate(..)) => leaf,
         };
 
         f(recursed)
@@ -327,12 +318,8 @@ impl Proposition {
                 q.fold(t, f)
             }
             Proposition::Not(p) => p.fold(init, f),
-            Proposition::Iff(p, q) => {
-                let t = p.fold(init, f);
-                q.fold(t, f)
-            }
             Proposition::Existential(_, body) => body.fold(init, f),
-            _ => init,
+            Proposition::Expr(_) | Proposition::Predicate(..) => init,
         };
         f(t, self)
     }
@@ -412,9 +399,6 @@ impl fmt::Display for Proposition {
             Proposition::Implication(p, q) => {
                 write!(f, "({})#==>({})", p, q)
             }
-            Proposition::Equality(p, q) => {
-                write!(f, "({})#==({})", p, q)
-            }
             Proposition::And(props) => {
                 if props.len() == 1 {
                     // Single element: just display it without extra wrapping
@@ -433,9 +417,6 @@ impl fmt::Display for Proposition {
             }
             Proposition::Not(p) => {
                 write!(f, "(not ({}))", p)
-            }
-            Proposition::Iff(p, q) => {
-                write!(f, "(iff {} {})", p, q)
             }
             Proposition::Existential(param, body) => {
                 write!(
@@ -540,10 +521,11 @@ mod tests {
                             Expression::Variable("n".into()),
                         ],
                     ),
-                    Proposition::Equality(
-                        Box::new(Proposition::Expr(Expression::Variable("n".into()))),
-                        Box::new(Proposition::Expr(Expression::Literal(Literal::Int(0)))),
-                    ),
+                    Proposition::Expr(Expression::BinaryOp(
+                        Box::new(Expression::Variable("n".into())),
+                        BinaryOp::Eq,
+                        Box::new(Expression::Literal(Literal::Int(0))),
+                    )),
                     Proposition::Predicate(
                         "leaf".to_string(),
                         vec![Expression::Variable("l".into())],
@@ -573,7 +555,7 @@ mod tests {
         let display_output = axiom.to_string();
         assert_eq!(
             display_output,
-            "let[@axiom] tree_leaf_depth_0_disjoint (l : tree) ((n [@exists]) : int) = (((depth l n) && (n)#==(0) && (leaf l)) || ((depth l n) && (n > 0) && (not ((leaf l)))))"
+            "let[@axiom] tree_leaf_depth_0_disjoint (l : tree) ((n [@exists]) : int) = (((depth l n) && (n == 0) && (leaf l)) || ((depth l n) && (n > 0) && (not ((leaf l)))))"
         );
     }
 
